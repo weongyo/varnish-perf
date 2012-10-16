@@ -161,6 +161,9 @@ VTAILQ_HEAD(workerhead, worker);
 
 /*--------------------------------------------------------------------*/
 
+#define	WQ_LOCK(wq)		AZ(pthread_mutex_lock(&(wq)->mtx));
+#define	WQ_UNLOCK(wq)		AZ(pthread_mutex_unlock(&(wq)->mtx));
+
 struct wq {
 	unsigned		magic;
 #define WQ_MAGIC		0x606658fa
@@ -300,6 +303,9 @@ cnt_timeout(struct sess *sp)
 {
 
 	switch (sp->prevstep) {
+	case STP_HTTP_CONNECT:
+		sp->step = STP_HTTP_ERROR;
+		break;
 	default:
 		WRONG("Unhandled timeout step");
 		break;
@@ -762,6 +768,15 @@ CNT_Session(struct sess *sp)
 	}
 }
 
+static void
+WRK_QueueInsert(struct wq *qp, struct sess *sp)
+{
+
+	VTAILQ_INSERT_TAIL(&qp->queue, sp, poollist);
+	qp->nqueue++;
+	qp->lqueue++;
+}
+
 /*--------------------------------------------------------------------
  * Queue a workrequest if possible.
  *
@@ -775,20 +790,18 @@ WRK_Queue(struct sess *sp)
 	struct wq *qp;
 
 	qp = &wq;
-	AZ(pthread_mutex_lock(&qp->mtx));
+	WQ_LOCK(qp);
 	/* If there are idle threads, we tickle the first one into action */
 	w = VTAILQ_FIRST(&qp->idle);
 	if (w != NULL) {
 		VTAILQ_REMOVE(&qp->idle, w, list);
-		AZ(pthread_mutex_unlock(&qp->mtx));
+		WQ_UNLOCK(qp);
 		w->sp = sp;
 		AZ(pthread_cond_signal(&w->cond));
 		return (0);
 	}
-	VTAILQ_INSERT_TAIL(&qp->queue, sp, poollist);
-	qp->nqueue++;
-	qp->lqueue++;
-	AZ(pthread_mutex_unlock(&qp->mtx));
+	WRK_QueueInsert(qp, sp);
+	WQ_UNLOCK(qp);
 	return (0);
 }
 
@@ -804,11 +817,16 @@ WRK_QueueSession(struct sess *sp)
 	return (1);
 }
 
+#define	EPOLLEVENT_MAX	(8 * 1024)
+
 static void *
 WRK_thread(void *arg)
 {
+	struct epoll_event ev[EPOLLEVENT_MAX], *ep;
+	struct sess *sp;
 	struct worker *w, ww;
 	struct wq *qp;
+	int i, n;
 
 	CAST_OBJ_NOTNULL(qp, arg, WQ_MAGIC);
 
@@ -820,29 +838,49 @@ WRK_thread(void *arg)
 	COT_init(&w->cb);
 	AZ(pthread_cond_init(&w->cond, NULL));
 
-	AZ(pthread_mutex_lock(&qp->mtx));
 	while (1) {
 		CHECK_OBJ_NOTNULL(w, WORKER_MAGIC);
+
+		COT_ticks(&w->cb);
+		COT_clock(&w->cb);
+
+		WQ_LOCK(qp);
 		/* Process queued requests, if any */
 		w->sp = VTAILQ_FIRST(&qp->queue);
 		if (w->sp != NULL) {
 			VTAILQ_REMOVE(&qp->queue, w->sp, poollist);
 			qp->lqueue--;
+		} else if (w->nwant > 0) {
+			WQ_UNLOCK(qp);
+			n = epoll_wait(w->fd, ev, EPOLLEVENT_MAX, 1000);
+			WQ_LOCK(qp);
+			for (ep = ev, i = 0; i < n; i++, ep++) {
+				CAST_OBJ_NOTNULL(sp, ep->data.ptr, SESS_MAGIC);
+				assert(w == sp->wrk);
+				sp->wrk = NULL;
+				callout_stop(&w->cb, &sp->co);
+				EVT_Del(w, sp->fd);
+				WRK_QueueInsert(qp, sp);
+			}
+			WQ_UNLOCK(qp);
+			continue;
 		} else {
 			VTAILQ_INSERT_HEAD(&qp->idle, w, list);
 			AZ(pthread_cond_wait(&w->cond, &qp->mtx));
 		}
-		if (w->sp == NULL)
+		if (w->sp == NULL) {
+			WQ_UNLOCK(qp);
 			break;
-		AZ(pthread_mutex_unlock(&qp->mtx));
+		}
+		WQ_UNLOCK(qp);
 
 		AZ(w->sp->wrk);
 		w->sp->wrk = w;
 		CNT_Session(w->sp);
 		w->sp = NULL;
-		AZ(pthread_mutex_lock(&qp->mtx));
 	}
 
+	assert(0 == 1);
 	NEEDLESS_RETURN(NULL);
 }
 
@@ -1016,6 +1054,7 @@ static int
 SES_Schedule(struct sess *sp)
 {
 
+	sp->wrk = NULL;
 	if (WRK_Queue(sp))
 		WRONG("failed to schedule the session");
 	return (0);
