@@ -1,7 +1,7 @@
 /* varnish-perf - multiprocessing http test client
  *
- * Copyright © 2012 by Weongyo Jeong <weongyo@gmail.com>.
- * Copyright © 1998,1999,2001 by Jef Poskanzer <jef@mail.acme.com>.
+ * Copyright (c) 2012 by Weongyo Jeong <weongyo@gmail.com>.
+ * Copyright (c) 1998,1999,2001 by Jef Poskanzer <jef@mail.acme.com>.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,26 +31,75 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <strings.h>
 #include <unistd.h>
 
 #include "vas.h"
 
-static int	c_arg;
+#define NEEDLESS_RETURN(foo)	return (foo)
+
+struct sess {
+	unsigned		magic;
+#define SESS_MAGIC		0x2c2f9c5a
+};
+
+struct worker {
+	unsigned		magic;
+#define WORKER_MAGIC		0x6391adcf
+	int		fd;
+};
+VTAILQ_HEAD(workerhead, worker);
+
+struct wq {
+	unsigned		magic;
+#define WQ_MAGIC		0x606658fa
+	pthread_mutex_t		mtx;
+	VTAILQ_HEAD(, sess)	queue;
+};
+
+static int	c_arg = 1;
+
+static void *
+pef_worker(void *arg)
+{
+	struct worker *w, ww;
+
+	w = &ww;
+	bzero(w, sizeof(*w));
+	w->magic = WORKER_MAGIC;
+	w->fd = epoll_create(1);
+	assert(w->fd >= 0);
+
+	while (1) {
+		
+	}
+
+	NEEDLESS_RETURN(NULL);
+}
 
 static void
 PEF_Run(void)
 {
-	pthread_t tp;
+	struct wq wq;
+	pthread_t tp[c_arg];
+	int i;
 
+	wq.magic = WQ_MAGIC;
+	AZ(pthread_mutex_init(&wq.mtx, NULL));
+
+	for (i = 0; i < c_arg; i++)
+		AZ(pthread_create(&tp[i], NULL, pef_worker, &wq));
+	for (i = 0; i < c_arg; i++)
+		AZ(pthread_join(tp[i], NULL));
 }
 
 static void
 usage(void)
 {
+
 	fprintf(stderr, "usage: varnishperf [options] urlfile\n");
 #define FMT "    %-28s # %s\n"
 	fprintf(stderr, FMT, "-c N", "Sets number of threads");
-
 }
 
 int

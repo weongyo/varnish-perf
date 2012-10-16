@@ -30,6 +30,9 @@ SRCS=	\
 
 OBJS=	$(SRCS:.c=.o)
 
+LDFLAGS=\
+	-lpthread
+
 all: varnishperf
 
 varnishperf: $(OBJS)
