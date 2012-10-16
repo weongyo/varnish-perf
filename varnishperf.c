@@ -44,6 +44,7 @@
 #include "vas.h"
 #include "vcallout.h"
 #include "vqueue.h"
+#include "vsb.h"
 
 #define NEEDLESS_RETURN(foo)	return (foo)
 
@@ -68,11 +69,15 @@ enum step {
 #undef STEP
 };
 
+#define	SESS_WANT_READ		1
+#define	SESS_WANT_WRITE		2
+
 struct sess {
 	unsigned		magic;
 #define SESS_MAGIC		0x2c2f9c5a
 	struct worker		*wrk;
 
+	enum step		prevstep;
 	enum step		step;
 	int			fd;
 
@@ -81,6 +86,9 @@ struct sess {
 	struct sockaddr_storage	*sockaddr;
 	struct sockaddr_storage	*mysockaddr;
 	struct listen_sock	*mylsock;
+
+	struct callout		co;
+	struct vsb		*vsb;
 
 	struct sessmem		*mem;
 	VTAILQ_ENTRY(sess)	poollist;
@@ -112,6 +120,8 @@ struct worker {
 #define WORKER_MAGIC		0x6391adcf
 	int			fd;
 	struct sess		*sp;
+	struct callout_block	cb;
+	int			nwant;
 
 	pthread_cond_t		cond;
 	VTAILQ_ENTRY(worker)	list;
@@ -140,7 +150,11 @@ static struct wq		wq;
  */
 static int	c_arg = 1;
 
+static void	EVT_Add(struct worker *wrk, int want, int fd, void *arg);
+static void	EVT_Del(struct worker *wrk, int fd);
 static void	SES_Delete(struct sess *sp);
+static int	SES_Schedule(struct sess *sp);
+static void	SES_Wait(struct sess *sp, int want);
 
 /*--------------------------------------------------------------------*/
 
@@ -201,6 +215,34 @@ vca_close_session(struct sess *sp, const char *why)
 	sp->fd = -1;
 }
 
+/*--------------------------------------------------------------------*/
+
+static void
+cnt_timeout_tick(void *arg)
+{
+	struct sess *sp = arg;
+
+	CHECK_OBJ_NOTNULL(sp, SESS_MAGIC);
+
+	callout_stop(&sp->wrk->cb, &sp->co);
+	EVT_Del(sp->wrk, sp->fd);
+	sp->prevstep = sp->step;
+	sp->step = STP_TIMEOUT;
+	SES_Schedule(sp);
+}
+
+static int
+cnt_timeout(struct sess *sp)
+{
+
+	switch (sp->prevstep) {
+	default:
+		WRONG("Unhandled timeout step");
+		break;
+	}
+	return (0);
+}
+
 /*--------------------------------------------------------------------
  * The very first request
  */
@@ -209,17 +251,100 @@ static int
 cnt_first(struct sess *sp)
 {
 
-	sp->step = STP_DONE;
+	sp->step = STP_START;
 	return (0);
 }
 
 /*--------------------------------------------------------------------
- * Emit an error
+ * START
+ * Handle a request, wherever it came from recv/restart.
  */
 
 static int
-cnt_error(struct sess *sp)
+cnt_start(struct sess *sp)
 {
+
+	callout_init(&sp->co, 0);
+
+	sp->step = STP_HTTP_START;
+	return (0);
+}
+
+static int
+cnt_http_start(struct sess *sp)
+{
+	int ret;
+
+	/* XXX doesn't care for IPv6 at all */
+	sp->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (sp->fd == -1) {
+		fprintf(stderr, "socket(2) error: %d %s\n", errno,
+		    strerror(errno));
+		sp->step = STP_DONE;
+		return (0);
+	}
+	ret = VTCP_nonblocking(sp->fd);
+	if (ret != 0) {
+		fprintf(stderr, "VTCP_nonblocking() error");
+		sp->step = STP_HTTP_ERROR;
+		return (0);
+	}
+	sp->vsb = VSB_new_auto();
+	AN(sp->vsb);
+	sp->step = STP_HTTP_CONNECT;
+	return (0);
+}
+
+static int
+cnt_http_connect(struct sess *sp)
+{
+	int ret;
+
+	ret = connect(sp->fd, (struct sockaddr *)&sp->sockaddr,
+	    sp->sockaddrlen);
+	if (ret == -1) {
+		if (errno != EINPROGRESS) {
+			fprintf(stderr, "connect(2) error: %d %s", errno,
+			    strerror(errno));
+			sp->step = STP_HTTP_ERROR;
+			return (0);
+		}
+		callout_reset(&sp->wrk->cb, &sp->co,
+		    CALLOUT_SECTOTICKS(3 /* XXX */), cnt_timeout_tick, sp);
+		SES_Wait(sp, SESS_WANT_WRITE);
+		return (1);
+	}
+	sp->step = STP_HTTP_BUILDREQ;
+	return (0);
+}
+
+static int
+cnt_http_buildreq(struct sess *sp)
+{
+
+	(void)sp;
+	assert(0 == 1);
+	return (0);
+}
+
+static int
+cnt_http_error(struct sess *sp)
+{
+
+	sp->step = STP_HTTP_DONE;
+	return (0);
+}
+
+static int
+cnt_http_done(struct sess *sp)
+{
+	int i;
+
+	assert(sp->fd >= 0);
+	i = close(sp->fd);
+	assert(i == 0 || errno != EBADF); /* XXX EINVAL seen */
+	sp->fd = -1;
+	VSB_delete(sp->vsb);
 
 	sp->step = STP_DONE;
 	return (0);
@@ -314,7 +439,6 @@ WRK_Queue(struct sess *sp)
 
 	qp = &wq;
 	AZ(pthread_mutex_lock(&qp->mtx));
-
 	/* If there are idle threads, we tickle the first one into action */
 	w = VTAILQ_FIRST(&qp->idle);
 	if (w != NULL) {
@@ -324,7 +448,6 @@ WRK_Queue(struct sess *sp)
 		AZ(pthread_cond_signal(&w->cond));
 		return (0);
 	}
-
 	VTAILQ_INSERT_TAIL(&qp->queue, sp, poollist);
 	qp->nqueue++;
 	qp->lqueue++;
@@ -357,6 +480,7 @@ WRK_thread(void *arg)
 	w->magic = WORKER_MAGIC;
 	w->fd = epoll_create(1);
 	assert(w->fd >= 0);
+	COT_init(&w->cb);
 	AZ(pthread_cond_init(&w->cond, NULL));
 
 	AZ(pthread_mutex_lock(&qp->mtx));
@@ -404,6 +528,43 @@ TIM_sleep(double t)
 
 	ts = TIM_timespec(t);
 	(void)nanosleep(&ts, NULL);
+}
+
+/*--------------------------------------------------------------------*/
+
+static void
+EVT_Add(struct worker *wrk, int want, int fd, void *arg)
+{
+	struct epoll_event ev;
+
+	AN(arg);
+	ev.data.ptr = arg;
+	ev.events = EPOLLERR;
+	switch (want) {
+	case SESS_WANT_READ:
+		ev.events |= EPOLLIN | EPOLLPRI;
+		break;
+	case SESS_WANT_WRITE:
+		ev.events |= EPOLLOUT;
+		break;
+	default:
+		WRONG("Unknown event type");
+		break;
+	}
+	AZ(epoll_ctl(wrk->fd, EPOLL_CTL_ADD, fd, &ev));
+	assert(wrk->nwant >= 0);
+	wrk->nwant++;
+}
+
+static void
+EVT_Del(struct worker *wrk, int fd)
+{
+	struct epoll_event ev = { 0 , { 0 } };
+
+	assert(fd >= 0);
+	AZ(epoll_ctl(wrk->fd, EPOLL_CTL_DEL, fd, &ev));
+	assert(wrk->nwant > 0);
+	wrk->nwant--;
 }
 
 /*--------------------------------------------------------------------*/
@@ -500,6 +661,29 @@ SES_Delete(struct sess *sp)
 	AZ(pthread_mutex_lock(&ses_mem_mtx));
 	VTAILQ_INSERT_HEAD(&ses_free_mem[1 - ses_qp], sm, list);
 	AZ(pthread_mutex_unlock(&ses_mem_mtx));
+}
+
+static void
+SES_Wait(struct sess *sp, int want)
+{
+
+	CHECK_OBJ_NOTNULL(sp, SESS_MAGIC);
+	CHECK_OBJ_NOTNULL(sp->wrk, WORKER_MAGIC);
+	assert(sp->fd >= 0);
+	EVT_Add(sp->wrk, want, sp->fd, sp);
+}
+
+/*--------------------------------------------------------------------
+ * Schedule a session back on a work-thread from its pool
+ */
+
+static int
+SES_Schedule(struct sess *sp)
+{
+
+	if (WRK_Queue(sp))
+		WRONG("failed to schedule the session");
+	return (0);
 }
 
 /*--------------------------------------------------------------------*/

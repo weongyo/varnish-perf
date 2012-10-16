@@ -1,5 +1,5 @@
 #
-# Copyright © 2012 by Weongyo Jeong <weongyo@gmail.com>.
+# Copyright (c) 2012 by Weongyo Jeong <weongyo@gmail.com>.
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -26,6 +26,7 @@
 SRCS=	\
 	varnishperf.c \
 	vas.c \
+	vsb.c \
 	vcallout.c
 
 OBJS=	$(SRCS:.c=.o)

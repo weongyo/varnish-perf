@@ -28,6 +28,12 @@
  *
  */
 
-STEP(first,	FIRST)
-STEP(error,	ERROR)
-STEP(done,	DONE)
+STEP(first,		FIRST)
+STEP(start,		START)
+STEP(http_start,	HTTP_START)
+STEP(http_error,	HTTP_ERROR)
+STEP(http_connect,	HTTP_CONNECT)
+STEP(http_buildreq,	HTTP_BUILDREQ)
+STEP(http_done,		HTTP_DONE)
+STEP(timeout,		TIMEOUT)
+STEP(done,		DONE)
