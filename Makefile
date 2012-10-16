@@ -32,3 +32,7 @@ all: varnishperf
 
 varnishperf: $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LDFLAGS)
+
+clean:
+	rm -f varnishperf $(OBJS) *~
+
