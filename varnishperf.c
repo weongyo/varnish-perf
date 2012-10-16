@@ -1,6 +1,7 @@
-/* varnish-perf - multiprocessing http test client
- *
+/*-
  * Copyright (c) 2012 by Weongyo Jeong <weongyo@gmail.com>.
+ * Copyright (c) 2006 Verdens Gang AS
+ * Copyright (c) 2006-2009 Varnish Software AS
  * Copyright (c) 1998,1999,2001 by Jef Poskanzer <jef@mail.acme.com>.
  * All rights reserved.
  *
@@ -31,6 +32,7 @@
 #include <netinet/in.h>
 #include <errno.h>
 #include <math.h>
+#include <netdb.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -60,9 +62,29 @@ struct params {
 	unsigned		diag_bitmap;
 };
 static struct params		_params = {
-	.diag_bitmap = 0x0
+	.diag_bitmap = 0x1
 };
 static struct params		*params = &_params;
+
+/*--------------------------------------------------------------------*/
+
+struct url {
+	unsigned		magic;
+#define	URL_MAGIC		0x3178c2cb
+	char			*url_str;
+	char			*hostname;
+	char			*path;
+	unsigned short		portnum;
+	struct sockaddr_storage sockaddr;
+	int			sockaddrlen;
+
+	/* formatted ascii target address */
+	char			addr[VTCP_ADDRBUFSIZE];
+	char			port[VTCP_PORTBUFSIZE];
+};
+static struct url		*urls;
+static int			num_urls;
+static int			max_urls;
 
 /*--------------------------------------------------------------------*/
 
@@ -84,15 +106,10 @@ struct sess {
 	enum step		step;
 	int			fd;
 
-	/* formatted ascii target address */
-	char			addr[VTCP_ADDRBUFSIZE];
-	char			port[VTCP_PORTBUFSIZE];
+	struct url		*url;
 
-	socklen_t		sockaddrlen;
 	socklen_t		mysockaddrlen;
-	struct sockaddr_storage	*sockaddr;
 	struct sockaddr_storage	*mysockaddr;
-	struct listen_sock	*mylsock;
 
 	struct callout		co;
 
@@ -116,7 +133,7 @@ struct sessmem {
 
 	struct sess		sess;
 	VTAILQ_ENTRY(sessmem)	list;
-	struct sockaddr_storage	sockaddr[2];
+	struct sockaddr_storage	sockaddr[1];
 };
 
 static VTAILQ_HEAD(,sessmem)	ses_free_mem[2] = {
@@ -163,6 +180,11 @@ static struct wq		wq;
  * would be invoked.
  */
 static int	c_arg = 1;
+/*
+ * Sets rate.  This option will pointing how many requests will be scheduled
+ * per a second.
+ */
+static int	r_arg = 1;
 
 static void	EVT_Add(struct worker *wrk, int want, int fd, void *arg);
 static void	EVT_Del(struct worker *wrk, int fd);
@@ -211,6 +233,34 @@ VTCP_nonblocking(int sock)
 	j = ioctl(sock, FIONBIO, &i);
 	VTCP_Assert(j);
 	return (j);
+}
+
+/*--------------------------------------------------------------------*/
+
+static void
+VTCP_name(const struct sockaddr_storage *addr, unsigned l,
+    char *abuf, unsigned alen, char *pbuf, unsigned plen)
+{
+	int i;
+
+	i = getnameinfo((const void *)addr, l, abuf, alen, pbuf, plen,
+	   NI_NUMERICHOST | NI_NUMERICSERV);
+	if (i) {
+		/*
+		 * XXX this printf is shitty, but we may not have space
+		 * for the gai_strerror in the bufffer :-(
+		 */
+		printf("getnameinfo = %d %s\n", i, gai_strerror(i));
+		(void)snprintf(abuf, alen, "Conversion");
+		(void)snprintf(pbuf, plen, "Failed");
+		return;
+	}
+	/* XXX dirty hack for v4-to-v6 mapped addresses */
+	if (strncmp(abuf, "::ffff:", 7) == 0) {
+		for (i = 0; abuf[i + 7]; ++i)
+			abuf[i] = abuf[i + 7];
+		abuf[i] = '\0';
+	}
 }
 
 /*--------------------------------------------------------------------*/
@@ -277,8 +327,10 @@ cnt_first(struct sess *sp)
 static int
 cnt_start(struct sess *sp)
 {
+	static int cnt = 0;
 
 	callout_init(&sp->co, 0);
+	sp->url = &urls[cnt++ % num_urls];
 
 	sp->step = STP_HTTP_START;
 	return (0);
@@ -312,10 +364,11 @@ cnt_http_start(struct sess *sp)
 static int
 cnt_http_connect(struct sess *sp)
 {
+	struct url *url = sp->url;
 	int ret;
 
-	ret = connect(sp->fd, (struct sockaddr *)&sp->sockaddr,
-	    sp->sockaddrlen);
+	ret = connect(sp->fd, (struct sockaddr *)&url->sockaddr,
+	    url->sockaddrlen);
 	if (ret == -1) {
 		if (errno != EINPROGRESS) {
 			fprintf(stderr, "connect(2) error: %d %s", errno,
@@ -359,6 +412,7 @@ cnt_http_buildreq(struct sess *sp)
 static int
 cnt_http_txreq(struct sess *sp)
 {
+	struct url *url = sp->url;
 	ssize_t l;
 
 	assert(VSB_len(sp->vsb) - sp->woffset > 0);
@@ -369,7 +423,7 @@ cnt_http_txreq(struct sess *sp)
 			goto wantwrite;
 		fprintf(stderr,
 		    "write(2) error to %s:%s: %d %s\n",
-		    sp->addr, sp->port, errno, strerror(errno));
+		    url->addr, url->port, errno, strerror(errno));
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
@@ -659,7 +713,7 @@ static void
 cnt_diag(struct sess *sp, const char *state)
 {
 
-	fprintf(stdout, "thr %p STP_%s sp %p", (void *)pthread_self(), state,
+	fprintf(stdout, "thr %p STP_%s sp %p\n", (void *)pthread_self(), state,
 	    sp);
 }
 
@@ -881,11 +935,9 @@ ses_setup(struct sessmem *sm)
 	AZ(sp->magic);
 	sp->magic = SESS_MAGIC;
 	sp->mem = sm;
-	sp->sockaddr = (void*)(&sm->sockaddr[0]);
-	sp->sockaddrlen = sizeof(sm->sockaddr[0]);
-	sp->mysockaddr = (void*)(&sm->sockaddr[1]);
-	sp->mysockaddrlen = sizeof(sm->sockaddr[1]);
-	sp->sockaddr->ss_family = sp->mysockaddr->ss_family = PF_UNSPEC;
+	sp->mysockaddr = (void*)(&sm->sockaddr[0]);
+	sp->mysockaddrlen = sizeof(sm->sockaddr[0]);
+	sp->mysockaddr->ss_family = PF_UNSPEC;
 }
 
 /*--------------------------------------------------------------------
@@ -984,12 +1036,15 @@ SCH_tick_1s(void *arg)
 {
 	struct sched *scp;
 	struct sess *sp;
+	int i;
 
 	CAST_OBJ_NOTNULL(scp, arg, SCHED_MAGIC);
 
-	sp = SES_New();
-	AN(sp);
-	AZ(WRK_QueueSession(sp));
+	for (i = 0; i < r_arg; i++) {
+		sp = SES_New();
+		AN(sp);
+		AZ(WRK_QueueSession(sp));
+	}
 
 	callout_reset(&scp->cb, &scp->co, CALLOUT_SECTOTICKS(1), SCH_tick_1s,
 	    arg);
@@ -1037,6 +1092,97 @@ PEF_Run(void)
 		AZ(pthread_join(tp[i], NULL));
 }
 
+/*--------------------------------------------------------------------*/
+
+static void
+URL_resolv(int n)
+{
+	struct hostent *he;
+	struct sockaddr_in *sin4;
+	struct url *url;
+
+	url = urls + n;
+	bzero(&url->sockaddr, sizeof(url->sockaddr));
+	url->sockaddrlen = sizeof(*sin4);
+	/* XXX IPv6 */
+	he = gethostbyname(url->hostname);
+	if (he == NULL) {
+		(void)fprintf(stderr, "unknown host - %s\n", url->hostname);
+		exit(1);
+	}
+	sin4 = (struct sockaddr_in *)&url->sockaddr;
+	sin4->sin_family = he->h_addrtype;
+	(void)memmove(&sin4->sin_addr, he->h_addr, he->h_length);
+	sin4->sin_port = htons(url->portnum);
+
+	VTCP_name(&url->sockaddr, url->sockaddrlen,
+	    url->addr, sizeof url->addr, url->port, sizeof url->port);
+}
+
+static void
+URL_readfile(char *file)
+{
+	FILE *fp;
+	const char *http = "http://";
+	char line[5000], hostname[5000];
+	int http_len = strlen(http);
+	int proto_len, host_len;
+	char *cp;
+
+	fp = fopen(file, "r");
+	if (fp == NULL) {
+		perror(file);
+		exit(1);
+	}
+
+	max_urls = 100;
+	urls = (struct url *)malloc(max_urls * sizeof(struct url));
+	num_urls = 0;
+	while (fgets(line, sizeof(line), fp) != (char*) 0) {
+		if (line[strlen(line) - 1] == '\n')
+			line[strlen(line) - 1] = '\0';
+		if (num_urls >= max_urls) {
+			max_urls *= 2;
+			urls = (struct url *)realloc((void *)urls,
+			    max_urls * sizeof(struct url));
+		}
+		if (strlen(line) <= 0)
+			continue;
+		urls[num_urls].magic = URL_MAGIC;
+		urls[num_urls].url_str = strdup(line);
+		AN(urls[num_urls].url_str);
+		if (strncmp(http, line, http_len) == 0) {
+			proto_len = http_len;
+		} else {
+			(void)fprintf(stderr, "unknown protocol - %s\n",
+			    line);
+			exit(1);
+		}
+		for (cp = line + proto_len;
+		     *cp != '\0' && *cp != ':' && *cp != '/'; ++cp)
+			;
+		host_len = cp - line;
+		host_len -= proto_len;
+		strncpy(hostname, line + proto_len, host_len);
+		hostname[host_len] = '\0';
+		urls[num_urls].hostname = strdup(hostname);
+		AN(urls[num_urls].hostname);
+		if (*cp == ':') {
+			urls[num_urls].portnum = (unsigned short)atoi(++cp);
+			while (*cp != '\0' && *cp != '/')
+				++cp;
+		} else
+			urls[num_urls].portnum = 80;
+		if (*cp == '\0') 
+			urls[num_urls].path = strdup("/");
+		else
+			urls[num_urls].path = strdup(cp);
+		AN(urls[num_urls].path);
+		URL_resolv(num_urls);
+		++num_urls;
+	}
+}
+
 static void
 usage(void)
 {
@@ -1044,6 +1190,7 @@ usage(void)
 	fprintf(stderr, "usage: varnishperf [options] urlfile\n");
 #define FMT "    %-28s # %s\n"
 	fprintf(stderr, FMT, "-c N", "Sets number of threads");
+	fprintf(stderr, FMT, "-r N", "Sets rate.");
 	exit(1);
 }
 
@@ -1053,13 +1200,21 @@ main(int argc, char *argv[])
 	int ch;
 	char *end;
 
-	while ((ch = getopt(argc, argv, "c:")) != -1) {
+	while ((ch = getopt(argc, argv, "c:r:")) != -1) {
 		switch (ch) {
 		case 'c':
 			errno = 0;
 			c_arg = strtoul(optarg, &end, 10);
 			if (errno == ERANGE || end == optarg || *end) {
 				fprintf(stderr, "illegal number for -c\n");
+				exit(1);
+			}
+			break;
+		case 'r':
+			errno = 0;
+			r_arg = strtoul(optarg, &end, 10);
+			if (errno == ERANGE || end == optarg || *end) {
+				fprintf(stderr, "illegal number for -r\n");
 				exit(1);
 			}
 			break;
@@ -1073,5 +1228,12 @@ main(int argc, char *argv[])
 
 	(void)signal(SIGPIPE, SIG_IGN);
 
+	for (;argc > 0; argc--, argv++)
+		URL_readfile(*argv);
+	if (num_urls == 0) {
+		fprintf(stderr, "No URLs found.\n");
+		exit(1);
+	}
 	PEF_Run();
+	return (0);
 }
