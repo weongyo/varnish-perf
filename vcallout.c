@@ -24,20 +24,18 @@
  * SUCH DAMAGE.
  */
 
-#include "config.h"
-__ARMONID("$Id: mon_callout.c 972 2012-04-16 19:35:19Z weongyo $");
-#include "version.h"
-
 #include <sys/times.h>
 #include <errno.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-#include "mon.h"
 #include "vas.h"
+#include "vcallout.h"
 
+static int callout_debug = 0;
 static int avg_depth;
 static int avg_gcalls;
 static int avg_mtxcalls;
@@ -78,8 +76,8 @@ _callout_reset(struct callout_block *cb, struct callout *c, int to_ticks,
 	c->d_line = d_line;
 	VTAILQ_INSERT_TAIL(&cb->callwheel[c->c_time & cb->callwheelmask],
 	    c, c_links.tqe);
-	if (mon_param->diag_bitmap & 0x00040000)
-		VSL(SLT_Callout, c->c_id,
+	if (callout_debug)
+		fprintf(stdout,
 		    "%sscheduled %p func %p arg %p in %d",
 		    cancelled ? "re" : "", c, c->c_func, c->c_arg, to_ticks);
 
@@ -137,13 +135,13 @@ COT_clock(struct callout_block *cb)
 				c_arg = c->c_arg;
 				c->c_flags = (c->c_flags & ~CALLOUT_PENDING);
 				mpcalls++;
-				if (mon_param->diag_bitmap & 0x00040000)
-					VSL(SLT_Callout, c->c_id,
+				if (callout_debug)
+					fprintf(stdout,
 					    "callout mpsafe %p func %p "
 					    "arg %p", c, c_func, c_arg);
 				c_func(c_arg);
-				if (mon_param->diag_bitmap & 0x00040000)
-					VSL(SLT_Callout, c->c_id,
+				if (callout_debug)
+					fprintf(stdout,
 					    "callout %p finished", c);
 				steps = 0;
 				c = cb->nextsoftcheck;
@@ -168,8 +166,8 @@ _callout_stop_safe(struct callout_block *cb, struct callout *c)
 	 */
 	if (!(c->c_flags & CALLOUT_PENDING)) {
 		c->c_flags &= ~CALLOUT_ACTIVE;
-		if (mon_param->diag_bitmap & 0x00040000)
-			VSL(SLT_Callout, c->c_id,
+		if (callout_debug)
+			fprintf(stdout,
 			    "failed to stop %p func %p arg %p",
 			    c, c->c_func, c->c_arg);
 		return (0);
@@ -182,8 +180,8 @@ _callout_stop_safe(struct callout_block *cb, struct callout *c)
 	VTAILQ_REMOVE(&cb->callwheel[c->c_time & cb->callwheelmask], c,
 	    c_links.tqe);
 
-	if (mon_param->diag_bitmap & 0x00040000)
-		VSL(SLT_Callout, c->c_id, "cancelled %p func %p arg %p",
+	if (callout_debug)
+		fprintf(stderr, "cancelled %p func %p arg %p",
 		    c, c->c_func, c->c_arg);
 	return (1);
 }

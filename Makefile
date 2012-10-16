@@ -24,7 +24,9 @@
 # SUCH DAMAGE.
 
 SRCS=	\
-	varnishperf.c
+	varnishperf.c \
+	vas.c \
+	vcallout.c
 
 OBJS=	$(SRCS:.c=.o)
 
