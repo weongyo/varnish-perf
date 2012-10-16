@@ -43,9 +43,12 @@
 #include "miniobj.h"
 #include "vas.h"
 #include "vcallout.h"
+#include "vct.h"
 #include "vqueue.h"
 #include "vsb.h"
 
+#define VTCP_ADDRBUFSIZE	64
+#define VTCP_PORTBUFSIZE	16
 #define NEEDLESS_RETURN(foo)	return (foo)
 
 struct worker;
@@ -81,6 +84,10 @@ struct sess {
 	enum step		step;
 	int			fd;
 
+	/* formatted ascii target address */
+	char			addr[VTCP_ADDRBUFSIZE];
+	char			port[VTCP_PORTBUFSIZE];
+
 	socklen_t		sockaddrlen;
 	socklen_t		mysockaddrlen;
 	struct sockaddr_storage	*sockaddr;
@@ -88,7 +95,14 @@ struct sess {
 	struct listen_sock	*mylsock;
 
 	struct callout		co;
+
 	struct vsb		*vsb;
+	ssize_t			roffset;
+	ssize_t			woffset;
+#define	MAXHDRSIZ		(4 * 1024)
+	char			resp[MAXHDRSIZ];
+#define	MAXHDR			64
+	char			*resphdr[MAXHDR];
 
 	struct sessmem		*mem;
 	VTAILQ_ENTRY(sess)	poollist;
@@ -318,12 +332,281 @@ cnt_http_connect(struct sess *sp)
 	return (0);
 }
 
+static const char * const nl = "\r\n";
+
 static int
 cnt_http_buildreq(struct sess *sp)
 {
+	const char *req = "GET";
+	const char *proto = "HTTP/1.1";
+	const char *url = "/1b";
+	const char *hostname = "localhost";
 
-	(void)sp;
-	assert(0 == 1);
+	VSB_clear(sp->vsb);
+	VSB_printf(sp->vsb, "%s %s %s%s", req, url, proto, nl);
+	VSB_printf(sp->vsb, "Accept-Encoding: gzip, deflate%s", nl);
+	VSB_printf(sp->vsb, "Host: %s%s", hostname, nl);
+	VSB_printf(sp->vsb, "Connection: close%s", nl);
+	VSB_printf(sp->vsb, "User-Agent: Mozilla/4.0"
+	    " (compatible; MSIE 6.0; Windows NT 5.1; AryakaMon)%s", nl);
+	VSB_cat(sp->vsb, nl);
+	AZ(VSB_finish(sp->vsb));
+
+	sp->step = STP_HTTP_TXREQ;
+	return (0);
+}
+
+static int
+cnt_http_txreq(struct sess *sp)
+{
+	ssize_t l;
+
+	assert(VSB_len(sp->vsb) - sp->woffset > 0);
+	l = write(sp->fd, VSB_data(sp->vsb) + sp->woffset,
+	    VSB_len(sp->vsb) - sp->woffset);
+	if (l <= 0) {
+		if (l == -1 && errno == EAGAIN)
+			goto wantwrite;
+		fprintf(stderr,
+		    "write(2) error to %s:%s: %d %s\n",
+		    sp->addr, sp->port, errno, strerror(errno));
+		sp->step = STP_HTTP_ERROR;
+		return (0);
+	}
+	sp->woffset += l;
+	if (sp->woffset != VSB_len(sp->vsb)) {
+wantwrite:
+		callout_reset(&sp->wrk->cb, &sp->co,
+		    CALLOUT_SECTOTICKS(3 /* XXX */), cnt_timeout_tick, sp);
+		SES_Wait(sp, SESS_WANT_WRITE);
+		return (1);
+	}
+	sp->step = STP_HTTP_RXRESP;
+	return (0);
+}
+
+static int
+cnt_http_rxresp(struct sess *sp)
+{
+
+	sp->roffset = 0;
+	sp->step = STP_HTTP_RXRESP_HDR;
+	return (0);
+}
+
+/**********************************************************************
+ * find header
+ */
+
+static char *
+http_find_header(char * const *hh, const char *hdr)
+{
+	int n, l;
+	char *r;
+
+	l = strlen(hdr);
+
+	for (n = 3; hh[n] != NULL; n++) {
+		if (strncasecmp(hdr, hh[n], l) || hh[n][l] != ':')
+			continue;
+		for (r = hh[n] + l + 1; vct_issp(*r); r++)
+			continue;
+		return (r);
+	}
+	return (NULL);
+}
+
+static int
+http_probe_splitheader(struct sess *sp)
+{
+	char *p, *q, **hh;
+	int n;
+
+	memset(sp->resphdr, 0, sizeof(sp->resphdr));
+	hh = sp->resphdr;
+
+	n = 0;
+	p = sp->resp;
+
+	/* PROTO */
+	while (vct_islws(*p))
+		p++;
+	hh[n++] = p;
+	while (!vct_islws(*p))
+		p++;
+	if (vct_iscrlf(*p)) {
+		fprintf(stderr, "too early CRLF after PROTO");
+		return (-1);
+	}
+	*p++ = '\0';
+
+	/* STATUS */
+	while (vct_issp(*p))		/* XXX: H space only */
+		p++;
+	if (vct_iscrlf(*p)) {
+		fprintf(stderr, "too early CRLF after STATUS");
+		return (-1);
+	}
+	hh[n++] = p;
+	while (!vct_islws(*p))
+		p++;
+	if (vct_iscrlf(*p)) {
+		hh[n++] = NULL;
+		q = p;
+		p += vct_skipcrlf(p);
+		*q = '\0';
+	} else {
+		*p++ = '\0';
+		/* MSG */
+		while (vct_issp(*p))		/* XXX: H space only */
+			p++;
+		hh[n++] = p;
+		while (!vct_iscrlf(*p))
+			p++;
+		q = p;
+		p += vct_skipcrlf(p);
+		*q = '\0';
+	}
+	if (n != 3) {
+		fprintf(stderr, "wrong status header");
+		return (-1);
+	}
+
+	while (*p != '\0') {
+		if (n >= MAXHDR) {
+			fprintf(stderr, "too long headers");
+			return (-1);
+		}
+		if (vct_iscrlf(*p))
+			break;
+		hh[n++] = p++;
+		while (*p != '\0' && !vct_iscrlf(*p))
+			p++;
+		q = p;
+		p += vct_skipcrlf(p);
+		*q = '\0';
+	}
+	p += vct_skipcrlf(p);
+	if (*p != '\0')
+		return (-1);
+	return (0);
+}
+
+static int
+cnt_http_rxresp_hdr(struct sess *sp)
+{
+	ssize_t l;
+	int eoh = 0, i;
+	char *p;
+
+retry:
+	l = read(sp->fd, sp->resp + sp->roffset, 1);
+	if (l <= 0) {
+		if (l == -1 && errno == EAGAIN) {
+			callout_reset(&sp->wrk->cb, &sp->co,
+			    CALLOUT_SECTOTICKS(3 /* XXX */),
+			    cnt_timeout_tick, sp);
+			SES_Wait(sp, SESS_WANT_READ);
+			return (1);
+		}
+		fprintf(stderr, "read(2) error: %d %s", errno, strerror(errno));
+		sp->step = STP_HTTP_ERROR;
+		return (0);
+	}
+	sp->roffset += l;
+	sp->resp[sp->roffset] = '\0';
+	if (sp->roffset >= sizeof(sp->resp)) {
+		fprintf(stderr, "too big header response");
+		sp->step = STP_HTTP_ERROR;
+		return (0);
+	}
+	p = sp->resp + sp->roffset - 1;
+	for (i = 0; p > sp->resp; p--) {
+		if (*p != '\n')
+			break;
+		if (p - 1 > sp->resp && p[-1] == '\r')
+			p--;
+		if (++i == 2) {
+			eoh = 1;
+			break;
+		}
+	}
+	if (eoh == 0)
+		goto retry;
+	i = http_probe_splitheader(sp);
+	if (i == -1) {
+		fprintf(stderr, "corrupted response header");
+		sp->step = STP_HTTP_ERROR;
+		return (0);
+	}
+	sp->roffset = 0;
+	sp->step = STP_HTTP_RXRESP_BODY;
+	return (0);
+}
+
+/*--------------------------------------------------------------------
+ * Reads HTTP body until the state machine got a EOF from the sender.
+ * So at this moment, no parsing headers and body at all.  This
+ * implementation is right now because it always attaches
+ * "Connection: close" header.
+ */
+static int
+cnt_http_rxresp_body(struct sess *sp)
+{
+	char buf[64 * 1024], *p;
+	ssize_t l;
+
+	while ((l = read(sp->fd, buf, sizeof(buf))) > 0)
+		sp->roffset += l;
+	if (l == -1) {
+		if (l == -1 && errno == EAGAIN) {
+			callout_reset(&sp->wrk->cb, &sp->co,
+			    CALLOUT_SECTOTICKS(3 /* XXX */),
+			    cnt_timeout_tick, sp);
+			SES_Wait(sp, SESS_WANT_READ);
+			return (1);
+		}
+		fprintf(stderr, "read(2) error: %d %s", errno, strerror(errno));
+		sp->step = STP_HTTP_ERROR;
+		return (0);
+	}
+	/*
+	 * Got a EOF from the sender.  Checks the body length if
+	 * Content-Length header exists.
+	 */
+	p = http_find_header(sp->resphdr, "Content-Length");
+	if (p != NULL) {
+		l = (ssize_t)strtoul(p, NULL, 0);
+		if (l != sp->roffset) {
+			fprintf(stderr,
+			    "Content-Length isn't matched:"
+			    " %jd / %jd", l, sp->roffset);
+			sp->step = STP_HTTP_ERROR;
+			return (0);
+		}
+	}
+	sp->step = STP_HTTP_OK;
+	return (0);
+}
+
+static int
+cnt_http_ok(struct sess *sp)
+{
+	long int http_status;
+	char *endptr = NULL;
+
+	if (sp->resphdr[1] != NULL) {
+		errno = 0;
+		http_status = strtol(sp->resphdr[1], &endptr, 10);
+		if ((errno == ERANGE &&
+		     (http_status == LONG_MAX ||
+		      http_status == LONG_MIN)) ||
+		    (errno != 0 && http_status == 0) ||
+		    (sp->resphdr[1] == endptr))
+			goto skip;
+	}
+skip:
+	sp->step = STP_HTTP_DONE;
 	return (0);
 }
 

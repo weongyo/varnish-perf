@@ -26,6 +26,7 @@
 SRCS=	\
 	varnishperf.c \
 	vas.c \
+	vct.c \
 	vsb.c \
 	vcallout.c
 

@@ -1,6 +1,6 @@
 /*-
  * Copyright (c) 2006 Verdens Gang AS
- * Copyright (c) 2006-2011 Varnish Software AS
+ * Copyright (c) 2006-2009 Varnish Software AS
  * All rights reserved.
  *
  * Author: Poul-Henning Kamp <phk@phk.freebsd.dk>
@@ -28,17 +28,39 @@
  *
  */
 
-STEP(first,		FIRST)
-STEP(start,		START)
-STEP(http_start,	HTTP_START)
-STEP(http_connect,	HTTP_CONNECT)
-STEP(http_buildreq,	HTTP_BUILDREQ)
-STEP(http_txreq,	HTTP_TXREQ)
-STEP(http_rxresp,	HTTP_RXRESP)
-STEP(http_rxresp_hdr,	HTTP_RXRESP_HDR)
-STEP(http_rxresp_body,	HTTP_RXRESP_BODY)
-STEP(http_done,		HTTP_DONE)
-STEP(http_error,	HTTP_ERROR)
-STEP(http_ok,		HTTP_OK)
-STEP(timeout,		TIMEOUT)
-STEP(done,		DONE)
+#include <stdint.h>
+
+#define VCT_SP			(1<<0)
+#define VCT_CRLF		(1<<1)
+#define VCT_LWS			(VCT_CRLF | VCT_SP)
+#define VCT_CTL			(1<<2)
+#define VCT_ALPHA		(1<<3)
+#define VCT_SEPARATOR		(1<<4)
+#define VCT_DIGIT		(1<<5)
+#define VCT_HEX			(1<<6)
+#define VCT_XMLNAMESTART	(1<<7)
+#define VCT_XMLNAME		(1<<8)
+
+extern const uint16_t vct_typtab[256];
+
+static inline int
+vct_is(unsigned char x, uint16_t y)
+{
+
+	return (vct_typtab[x] & (y));
+}
+
+#define vct_issp(x) vct_is(x, VCT_SP)
+#define vct_ishex(x) vct_is(x, VCT_HEX)
+#define vct_iscrlf(x) vct_is(x, VCT_CRLF)
+#define vct_islws(x) vct_is(x, VCT_LWS)
+#define vct_isctl(x) vct_is(x, VCT_CTL)
+#define vct_isdigit(x) vct_is(x, VCT_DIGIT)
+#define vct_isalpha(x) vct_is(x, VCT_ALPHA)
+#define vct_issep(x) vct_is(x, VCT_SEPARATOR)
+#define vct_issepctl(x) vct_is(x, VCT_SEPARATOR | VCT_CTL)
+#define vct_isxmlnamestart(x) vct_is(x, VCT_XMLNAMESTART)
+#define vct_isxmlname(x) vct_is(x, VCT_XMLNAMESTART | VCT_XMLNAME)
+
+/* NB: VCT always operate in ASCII, don't replace 0x0d with \r etc. */
+#define vct_skipcrlf(p) (p[0] == 0x0d && p[1] == 0x0a ? 2 : 1)
