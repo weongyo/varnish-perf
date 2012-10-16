@@ -30,8 +30,19 @@ SRCS=	\
 
 OBJS=	$(SRCS:.c=.o)
 
+CFLAGS= \
+	-std=gnu99 \
+	-Wpointer-arith \
+	-Wreturn-type -Wcast-qual -Wwrite-strings -Wswitch \
+	-Wcast-align -Wunused-parameter -Wchar-subscripts -Winline \
+	-Wformat -Wextra -Wno-missing-field-initializers -Wno-sign-compare \
+	-Wall -Werror -Wshadow -Wstrict-prototypes -Wnested-externs \
+	-Wmissing-prototypes -Wredundant-decls \
+	-O0 -g -fno-inline
+
+
 LDFLAGS=\
-	-lpthread
+	-lm -lpthread
 
 all: varnishperf
 
