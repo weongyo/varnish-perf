@@ -584,15 +584,52 @@ http_probe_splitheader(struct sess *sp)
 	return (0);
 }
 
+/*--------------------------------------------------------------------
+ * Check if we have a complete HTTP request or response yet
+ *
+ * Return values:
+ *	 0  No, keep trying
+ *	>0  Yes, it is this many bytes long.
+ */
+
+static int
+htc_header_complete(char *b, char *e)
+{
+	const char *p;
+
+	assert(*e == '\0');
+	/* Skip any leading white space */
+	for (p = b ; vct_issp(*p); p++)
+		continue;
+	if (p == e) {
+		/* All white space */
+		e = b;
+		*e = '\0';
+		return (0);
+	}
+	while (1) {
+		p = strchr(p, '\n');
+		if (p == NULL)
+			return (0);
+		p++;
+		if (*p == '\r')
+			p++;
+		if (*p == '\n')
+			break;
+	}
+	p++;
+	return (p - b);
+}
+
 static int
 cnt_http_rxresp_hdr(struct sess *sp)
 {
 	ssize_t l;
-	int eoh = 0, i;
-	char *p;
+	int i, r;
 
 retry:
-	l = read(sp->fd, sp->resp + sp->roffset, 1);
+	l = read(sp->fd, sp->resp + sp->roffset,
+	    sizeof(sp->resp) - sp->roffset);
 	if (l <= 0) {
 		if (l == -1 && errno == EAGAIN) {
 			callout_reset(&sp->wrk->cb, &sp->co,
@@ -601,8 +638,15 @@ retry:
 			SES_Wait(sp, SESS_WANT_READ);
 			return (1);
 		}
-		fprintf(stderr, "read(2) error: %d %s\n", errno,
-		    strerror(errno));
+		if (l == 0) {
+			fprintf(stderr,
+			    "[ERROR] %s: read(2) error: unexpected EOF"
+			    " (offset %zd)\n", __func__, sp->roffset);
+			sp->step = STP_HTTP_ERROR;
+			return (0);
+		}
+		fprintf(stderr, "[ERROR] %s: read(2) error: %d %s\n", __func__,
+		    errno, strerror(errno));
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
@@ -613,26 +657,21 @@ retry:
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
-	p = sp->resp + sp->roffset - 1;
-	for (i = 0; p > sp->resp; p--) {
-		if (*p != '\n')
-			break;
-		if (p - 1 > sp->resp && p[-1] == '\r')
-			p--;
-		if (++i == 2) {
-			eoh = 1;
-			break;
-		}
-	}
-	if (eoh == 0)
+	i = htc_header_complete(sp->resp, sp->resp + sp->roffset);
+	if (i == 0)
 		goto retry;
-	i = http_probe_splitheader(sp);
-	if (i == -1) {
+	sp->resp[i] = '\0';
+	r = http_probe_splitheader(sp);
+	if (r == -1) {
 		fprintf(stderr, "corrupted response header\n");
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
+	/* Handles sp->resp buffer remained. */
+	l = sp->roffset;
 	sp->roffset = 0;
+	if (i < l)
+		sp->roffset += l - i;
 	sp->step = STP_HTTP_RXRESP_BODY;
 	return (0);
 }
