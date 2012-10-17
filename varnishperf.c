@@ -316,7 +316,6 @@ cnt_timeout_tick(void *arg)
 
 	CHECK_OBJ_NOTNULL(sp, SESS_MAGIC);
 
-	callout_stop(&sp->wrk->cb, &sp->co);
 	EVT_Del(sp->wrk, sp->fd);
 	sp->prevstep = sp->step;
 	sp->step = STP_TIMEOUT;
