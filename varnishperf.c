@@ -937,18 +937,16 @@ WRK_thread(void *arg)
 			WQ_UNLOCK(qp);
 			n = epoll_wait(w->fd, ev, EPOLLEVENT_MAX,
 			    empty ? 1000 : 0);
-			WQ_LOCK(qp);
 			for (ep = ev, i = 0; i < n; i++, ep++) {
 				CAST_OBJ_NOTNULL(sp, ep->data.ptr, SESS_MAGIC);
 				assert(w == sp->wrk);
 				sp->wrk = NULL;
 				callout_stop(&w->cb, &sp->co);
 				EVT_Del(w, sp->fd);
-				WQ_UNLOCK(qp);
 				sp->wrk = w;
 				CNT_Session(sp);
-				WQ_LOCK(qp);
 			}
+			WQ_LOCK(qp);
 			if (VTAILQ_EMPTY(&qp->queue)) {
 				WQ_UNLOCK(qp);
 				continue;
@@ -1018,6 +1016,7 @@ EVT_Add(struct worker *wrk, int want, int fd, void *arg)
 	struct epoll_event ev;
 
 	assert(pthread_equal(wrk->owner, pthread_self()));
+	Lck_AssertNotHeld(&wq.mtx);
 
 	AN(arg);
 	ev.data.ptr = arg;
@@ -1044,6 +1043,7 @@ EVT_Del(struct worker *wrk, int fd)
 	struct epoll_event ev = { 0 , { 0 } };
 
 	assert(pthread_equal(wrk->owner, pthread_self()));
+	Lck_AssertNotHeld(&wq.mtx);
 
 	assert(fd >= 0);
 	AZ(epoll_ctl(wrk->fd, EPOLL_CTL_DEL, fd, &ev));
