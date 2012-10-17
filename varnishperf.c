@@ -866,7 +866,13 @@ WRK_thread(void *arg)
 		COT_clock(&w->cb);
 
 		WQ_LOCK(qp);
-		if (w->nwant > 0) {
+
+		/* Process queued requests, if any */
+		w->sp = VTAILQ_FIRST(&qp->queue);
+		if (w->sp != NULL) {
+			VTAILQ_REMOVE(&qp->queue, w->sp, poollist);
+			qp->lqueue--;
+		} else if (w->nwant > 0) {
 			WQ_UNLOCK(qp);
 			n = epoll_wait(w->fd, ev, EPOLLEVENT_MAX, 1000);
 			WQ_LOCK(qp);
@@ -878,19 +884,8 @@ WRK_thread(void *arg)
 				EVT_Del(w, sp->fd);
 				WRK_QueueInsert(qp, sp, 1);
 			}
-			w->sp = VTAILQ_FIRST(&qp->queue);
-			if (w->sp != NULL) {
-				VTAILQ_REMOVE(&qp->queue, w->sp, poollist);
-				qp->lqueue--;
-			}
 			WQ_UNLOCK(qp);
 			continue;
-		}
-		/* Process queued requests, if any */
-		w->sp = VTAILQ_FIRST(&qp->queue);
-		if (w->sp != NULL) {
-			VTAILQ_REMOVE(&qp->queue, w->sp, poollist);
-			qp->lqueue--;
 		} else {
 			VTAILQ_INSERT_HEAD(&qp->idle, w, list);
 			AZ(pthread_cond_wait(&w->cond, &qp->mtx));
