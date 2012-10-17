@@ -876,8 +876,10 @@ cnt_http_done(struct sess *sp)
 	i = close(sp->fd);
 	assert(i == 0 || errno != EBADF); /* XXX EINVAL seen */
 	sp->fd = -1;
-	VSB_delete(sp->vsb);
-
+	if (sp->vsb != NULL) {
+		VSB_delete(sp->vsb);
+		sp->vsb = NULL;
+	}
 	sp->step = STP_DONE;
 	return (0);
 }
@@ -1502,17 +1504,19 @@ PEF_Run(void)
 /*--------------------------------------------------------------------*/
 
 static void
-SIP_readfile(const char* sip_file)
+SIP_readfile(const char* file)
 {
 	struct sockaddr_in *sin4;
 	FILE* fp;
 	char line[5000];
 
-	fp = fopen(sip_file, "r");
+	fp = fopen(file, "r");
 	if (fp == NULL) {
-		perror(sip_file);
+		perror(file);
 		exit(1);
 	}
+
+	fprintf(stdout, "[INFO] Reading %s SRCIP file.\n", file);
 
 	max_srcips = 100;
 	srcips = (struct srcip *)malloc(max_srcips * sizeof(struct srcip));
@@ -1544,6 +1548,9 @@ SIP_readfile(const char* sip_file)
 		srcips[num_srcips].sockaddrlen = sizeof(*sin4);
 		++num_srcips;
 	}
+
+	fprintf(stdout, "[INFO] Total %d SRCIP are loaded from %s file.\n",
+	    num_srcips, file);
 }
 
 static void
@@ -1587,7 +1594,7 @@ URL_readfile(const char *file)
 		exit(1);
 	}
 
-	fprintf(stdout, "[INFO] Reading %s file.\n", file);
+	fprintf(stdout, "[INFO] Reading %s URL file.\n", file);
 
 	max_urls = 100;
 	urls = (struct url *)malloc(max_urls * sizeof(struct url));
