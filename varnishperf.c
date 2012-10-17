@@ -46,6 +46,7 @@
 #include "vas.h"
 #include "vcallout.h"
 #include "vct.h"
+#include "vlck.h"
 #include "vqueue.h"
 #include "vsb.h"
 
@@ -163,9 +164,9 @@ static VTAILQ_HEAD(,sessmem)	ses_free_mem[2] = {
 };
 
 static unsigned			ses_qp;
-static pthread_mutex_t		ses_mem_mtx;
+static struct lock		ses_mem_mtx;
 
-static pthread_mutex_t		ses_stat_mtx;
+static struct lock		ses_stat_mtx;
 static volatile uint64_t	n_sess_grab = 0;
 static uint64_t			n_sess_rel = 0;
 
@@ -186,13 +187,13 @@ VTAILQ_HEAD(workerhead, worker);
 
 /*--------------------------------------------------------------------*/
 
-#define	WQ_LOCK(wq)		AZ(pthread_mutex_lock(&(wq)->mtx));
-#define	WQ_UNLOCK(wq)		AZ(pthread_mutex_unlock(&(wq)->mtx));
+#define	WQ_LOCK(wq)		Lck_Lock(&(wq)->mtx)
+#define	WQ_UNLOCK(wq)		Lck_Unlock(&(wq)->mtx)
 
 struct wq {
 	unsigned		magic;
 #define WQ_MAGIC		0x606658fa
-	pthread_mutex_t		mtx;
+	struct lock		mtx;
 	struct workerhead	idle;
 	VTAILQ_HEAD(, sess)	queue;
 	unsigned		lqueue;
@@ -915,7 +916,7 @@ WRK_thread(void *arg)
 		} else {
 			assert(w->nwant == 0);
 			VTAILQ_INSERT_HEAD(&qp->idle, w, list);
-			AZ(pthread_cond_wait(&w->cond, &qp->mtx));
+			Lck_CondWait(&w->cond, &qp->mtx);
 		}
 		if (w->sp == NULL) {
 			WQ_UNLOCK(qp);
@@ -1044,9 +1045,9 @@ SES_New(void)
 		 * If that queue is empty, flip queues holding the lock
 		 * and try the new unlocked queue.
 		 */
-		AZ(pthread_mutex_lock(&ses_mem_mtx));
+		Lck_Lock(&ses_mem_mtx);
 		ses_qp = 1 - ses_qp;
-		AZ(pthread_mutex_unlock(&ses_mem_mtx));
+		Lck_Unlock(&ses_mem_mtx);
 		sm = VTAILQ_FIRST(&ses_free_mem[ses_qp]);
 	}
 	if (sm != NULL) {
@@ -1063,9 +1064,9 @@ SES_New(void)
 	}
 	/* no lock needed */
 	n_sess_grab++;
-	AZ(pthread_mutex_lock(&ses_stat_mtx));
+	Lck_Lock(&ses_stat_mtx);
 	VSC_C_main->n_sess = n_sess_grab - n_sess_rel;
-	AZ(pthread_mutex_unlock(&ses_stat_mtx));
+	Lck_Unlock(&ses_stat_mtx);
 
 	return (sp);
 }
@@ -1086,15 +1087,15 @@ SES_Delete(struct sess *sp)
 
 	/* Clean and prepare for reuse */
 	ses_setup(sm);
-	AZ(pthread_mutex_lock(&ses_mem_mtx));
+	Lck_Lock(&ses_mem_mtx);
 	VTAILQ_INSERT_HEAD(&ses_free_mem[1 - ses_qp], sm, list);
-	AZ(pthread_mutex_unlock(&ses_mem_mtx));
+	Lck_Unlock(&ses_mem_mtx);
 
 	/* Update statistics */
-	AZ(pthread_mutex_lock(&ses_stat_mtx));
+	Lck_Lock(&ses_stat_mtx);
 	n_sess_rel++;
 	VSC_C_main->n_sess = n_sess_grab - n_sess_rel;
-	AZ(pthread_mutex_unlock(&ses_stat_mtx));
+	Lck_Unlock(&ses_stat_mtx);
 }
 
 static void
@@ -1190,8 +1191,8 @@ static void
 PEF_Init(void)
 {
 
-	AZ(pthread_mutex_init(&ses_mem_mtx, NULL));
-	AZ(pthread_mutex_init(&ses_stat_mtx, NULL));
+	Lck_New(&ses_mem_mtx, "Session Memory");
+	Lck_New(&ses_stat_mtx, "Session Statistics");
 }
 
 static void
@@ -1202,7 +1203,7 @@ PEF_Run(void)
 
 	bzero(&wq, sizeof(wq));
 	wq.magic = WQ_MAGIC;
-	AZ(pthread_mutex_init(&wq.mtx, NULL));
+	Lck_New(&wq.mtx, "WorkQueue lock");
 	VTAILQ_INIT(&wq.idle);
 	VTAILQ_INIT(&wq.queue);
 
@@ -1354,6 +1355,8 @@ main(int argc, char *argv[])
 	argv += optind;
 
 	(void)signal(SIGPIPE, SIG_IGN);
+
+	LCK_Init();
 
 	for (;argc > 0; argc--, argv++)
 		URL_readfile(*argv);
