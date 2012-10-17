@@ -62,9 +62,17 @@ struct params {
 	unsigned		diag_bitmap;
 };
 static struct params		_params = {
-	.diag_bitmap = 0x1
+	.diag_bitmap = 0x0
 };
 static struct params		*params = &_params;
+
+/*--------------------------------------------------------------------*/
+
+struct perfstat {
+	uint64_t		n_sess;
+};
+static struct perfstat		_perfstat;
+static struct perfstat		*VSC_C_main = &_perfstat;
 
 /*--------------------------------------------------------------------*/
 
@@ -133,7 +141,7 @@ struct sessmem {
 
 	struct sess		sess;
 	VTAILQ_ENTRY(sessmem)	list;
-	struct sockaddr_storage	sockaddr[1];
+	struct sockaddr_storage	sockaddr[2];
 };
 
 static VTAILQ_HEAD(,sessmem)	ses_free_mem[2] = {
@@ -143,6 +151,10 @@ static VTAILQ_HEAD(,sessmem)	ses_free_mem[2] = {
 
 static unsigned			ses_qp;
 static pthread_mutex_t		ses_mem_mtx;
+
+static pthread_mutex_t		ses_stat_mtx;
+static volatile uint64_t	n_sess_grab = 0;
+static uint64_t			n_sess_rel = 0;
 
 /*--------------------------------------------------------------------*/
 
@@ -304,6 +316,9 @@ cnt_timeout(struct sess *sp)
 
 	switch (sp->prevstep) {
 	case STP_HTTP_CONNECT:
+	case STP_HTTP_TXREQ:
+	case STP_HTTP_RXRESP_HDR:
+	case STP_HTTP_RXRESP_BODY:
 		sp->step = STP_HTTP_ERROR;
 		break;
 	default:
@@ -357,7 +372,7 @@ cnt_http_start(struct sess *sp)
 	}
 	ret = VTCP_nonblocking(sp->fd);
 	if (ret != 0) {
-		fprintf(stderr, "VTCP_nonblocking() error");
+		fprintf(stderr, "VTCP_nonblocking() error\n");
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
@@ -377,7 +392,7 @@ cnt_http_connect(struct sess *sp)
 	    url->sockaddrlen);
 	if (ret == -1) {
 		if (errno != EINPROGRESS) {
-			fprintf(stderr, "connect(2) error: %d %s", errno,
+			fprintf(stderr, "connect(2) error: %d %s\n", errno,
 			    strerror(errno));
 			sp->step = STP_HTTP_ERROR;
 			return (0);
@@ -495,7 +510,7 @@ http_probe_splitheader(struct sess *sp)
 	while (!vct_islws(*p))
 		p++;
 	if (vct_iscrlf(*p)) {
-		fprintf(stderr, "too early CRLF after PROTO");
+		fprintf(stderr, "too early CRLF after PROTO\n");
 		return (-1);
 	}
 	*p++ = '\0';
@@ -504,7 +519,7 @@ http_probe_splitheader(struct sess *sp)
 	while (vct_issp(*p))		/* XXX: H space only */
 		p++;
 	if (vct_iscrlf(*p)) {
-		fprintf(stderr, "too early CRLF after STATUS");
+		fprintf(stderr, "too early CRLF after STATUS\n");
 		return (-1);
 	}
 	hh[n++] = p;
@@ -528,13 +543,13 @@ http_probe_splitheader(struct sess *sp)
 		*q = '\0';
 	}
 	if (n != 3) {
-		fprintf(stderr, "wrong status header");
+		fprintf(stderr, "wrong status header\n");
 		return (-1);
 	}
 
 	while (*p != '\0') {
 		if (n >= MAXHDR) {
-			fprintf(stderr, "too long headers");
+			fprintf(stderr, "too long headers\n");
 			return (-1);
 		}
 		if (vct_iscrlf(*p))
@@ -569,14 +584,15 @@ retry:
 			SES_Wait(sp, SESS_WANT_READ);
 			return (1);
 		}
-		fprintf(stderr, "read(2) error: %d %s", errno, strerror(errno));
+		fprintf(stderr, "read(2) error: %d %s\n", errno,
+		    strerror(errno));
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
 	sp->roffset += l;
 	sp->resp[sp->roffset] = '\0';
 	if (sp->roffset >= sizeof(sp->resp)) {
-		fprintf(stderr, "too big header response");
+		fprintf(stderr, "too big header response\n");
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
@@ -595,7 +611,7 @@ retry:
 		goto retry;
 	i = http_probe_splitheader(sp);
 	if (i == -1) {
-		fprintf(stderr, "corrupted response header");
+		fprintf(stderr, "corrupted response header\n");
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
@@ -626,7 +642,8 @@ cnt_http_rxresp_body(struct sess *sp)
 			SES_Wait(sp, SESS_WANT_READ);
 			return (1);
 		}
-		fprintf(stderr, "read(2) error: %d %s", errno, strerror(errno));
+		fprintf(stderr, "read(2) error: %d %s\n", errno,
+		    strerror(errno));
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
@@ -640,7 +657,7 @@ cnt_http_rxresp_body(struct sess *sp)
 		if (l != sp->roffset) {
 			fprintf(stderr,
 			    "Content-Length isn't matched:"
-			    " %jd / %jd", l, sp->roffset);
+			    " %jd / %jd\n", l, sp->roffset);
 			sp->step = STP_HTTP_ERROR;
 			return (0);
 		}
@@ -704,6 +721,7 @@ cnt_done(struct sess *sp)
 
 	CHECK_OBJ_NOTNULL(sp, SESS_MAGIC);
 
+	assert(sp->fd == -1);
 	SES_Delete(sp);
 	return (1);
 }
@@ -769,10 +787,13 @@ CNT_Session(struct sess *sp)
 }
 
 static void
-WRK_QueueInsert(struct wq *qp, struct sess *sp)
+WRK_QueueInsert(struct wq *qp, struct sess *sp, int athead)
 {
 
-	VTAILQ_INSERT_TAIL(&qp->queue, sp, poollist);
+	if (athead)
+		VTAILQ_INSERT_HEAD(&qp->queue, sp, poollist);
+	else
+		VTAILQ_INSERT_TAIL(&qp->queue, sp, poollist);
 	qp->nqueue++;
 	qp->lqueue++;
 }
@@ -784,7 +805,7 @@ WRK_QueueInsert(struct wq *qp, struct sess *sp)
  */
 
 static int
-WRK_Queue(struct sess *sp)
+WRK_Queue(struct sess *sp, int athead)
 {
 	struct worker *w;
 	struct wq *qp;
@@ -800,7 +821,7 @@ WRK_Queue(struct sess *sp)
 		AZ(pthread_cond_signal(&w->cond));
 		return (0);
 	}
-	WRK_QueueInsert(qp, sp);
+	WRK_QueueInsert(qp, sp, athead);
 	WQ_UNLOCK(qp);
 	return (0);
 }
@@ -811,7 +832,7 @@ WRK_QueueSession(struct sess *sp)
 
 	CHECK_OBJ_NOTNULL(sp, SESS_MAGIC);
 	AZ(sp->wrk);
-	if (WRK_Queue(sp) == 0)
+	if (WRK_Queue(sp, 0) == 0)
 		return (0);
 	SES_Delete(sp);
 	return (1);
@@ -845,12 +866,7 @@ WRK_thread(void *arg)
 		COT_clock(&w->cb);
 
 		WQ_LOCK(qp);
-		/* Process queued requests, if any */
-		w->sp = VTAILQ_FIRST(&qp->queue);
-		if (w->sp != NULL) {
-			VTAILQ_REMOVE(&qp->queue, w->sp, poollist);
-			qp->lqueue--;
-		} else if (w->nwant > 0) {
+		if (w->nwant > 0) {
 			WQ_UNLOCK(qp);
 			n = epoll_wait(w->fd, ev, EPOLLEVENT_MAX, 1000);
 			WQ_LOCK(qp);
@@ -860,10 +876,21 @@ WRK_thread(void *arg)
 				sp->wrk = NULL;
 				callout_stop(&w->cb, &sp->co);
 				EVT_Del(w, sp->fd);
-				WRK_QueueInsert(qp, sp);
+				WRK_QueueInsert(qp, sp, 1);
+			}
+			w->sp = VTAILQ_FIRST(&qp->queue);
+			if (w->sp != NULL) {
+				VTAILQ_REMOVE(&qp->queue, w->sp, poollist);
+				qp->lqueue--;
 			}
 			WQ_UNLOCK(qp);
 			continue;
+		}
+		/* Process queued requests, if any */
+		w->sp = VTAILQ_FIRST(&qp->queue);
+		if (w->sp != NULL) {
+			VTAILQ_REMOVE(&qp->queue, w->sp, poollist);
+			qp->lqueue--;
 		} else {
 			VTAILQ_INSERT_HEAD(&qp->idle, w, list);
 			AZ(pthread_cond_wait(&w->cond, &qp->mtx));
@@ -973,8 +1000,8 @@ ses_setup(struct sessmem *sm)
 	AZ(sp->magic);
 	sp->magic = SESS_MAGIC;
 	sp->mem = sm;
-	sp->mysockaddr = (void*)(&sm->sockaddr[0]);
-	sp->mysockaddrlen = sizeof(sm->sockaddr[0]);
+	sp->mysockaddr = (void*)(&sm->sockaddr[1]);
+	sp->mysockaddrlen = sizeof(sm->sockaddr[1]);
 	sp->mysockaddr->ss_family = PF_UNSPEC;
 }
 
@@ -1012,6 +1039,8 @@ SES_New(void)
 		sp = &sm->sess;
 		CHECK_OBJ_NOTNULL(sp, SESS_MAGIC);
 	}
+	/* no lock needed */
+	n_sess_grab++;
 	return (sp);
 }
 
@@ -1034,6 +1063,12 @@ SES_Delete(struct sess *sp)
 	AZ(pthread_mutex_lock(&ses_mem_mtx));
 	VTAILQ_INSERT_HEAD(&ses_free_mem[1 - ses_qp], sm, list);
 	AZ(pthread_mutex_unlock(&ses_mem_mtx));
+
+	/* Update statistics */
+	AZ(pthread_mutex_lock(&ses_stat_mtx));
+	n_sess_rel++;
+	VSC_C_main->n_sess = n_sess_grab - n_sess_rel;
+	AZ(pthread_mutex_unlock(&ses_stat_mtx));
 }
 
 static void
@@ -1055,7 +1090,7 @@ SES_Schedule(struct sess *sp)
 {
 
 	sp->wrk = NULL;
-	if (WRK_Queue(sp))
+	if (WRK_Queue(sp, 1))
 		WRONG("failed to schedule the session");
 	return (0);
 }
@@ -1079,7 +1114,7 @@ SCH_tick_1s(void *arg)
 
 	CAST_OBJ_NOTNULL(scp, arg, SCHED_MAGIC);
 
-	for (i = 0; i < r_arg; i++) {
+	for (i = 0; i < r_arg && VSC_C_main->n_sess < r_arg; i++) {
 		sp = SES_New();
 		AN(sp);
 		AZ(WRK_QueueSession(sp));
@@ -1109,6 +1144,14 @@ SCH_thread(void *arg)
 	}
 
 	NEEDLESS_RETURN(NULL);
+}
+
+static void
+PEF_Init(void)
+{
+
+	AZ(pthread_mutex_init(&ses_mem_mtx, NULL));
+	AZ(pthread_mutex_init(&ses_stat_mtx, NULL));
 }
 
 static void
@@ -1273,6 +1316,7 @@ main(int argc, char *argv[])
 		fprintf(stderr, "No URLs found.\n");
 		exit(1);
 	}
+	PEF_Init();
 	PEF_Run();
 	return (0);
 }
