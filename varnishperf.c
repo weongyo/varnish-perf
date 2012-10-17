@@ -83,6 +83,13 @@ struct perfstat {
 	uint64_t		n_req;
 	uint64_t		n_httpok;
 	uint64_t		n_httperror;
+
+	double			t_conntotal;
+	double			t_connmin;
+	double			t_connavg;
+	double			t_connmax;
+	double			t_fbtotal;
+	double			t_bodytotal;
 };
 static struct perfstat		_perfstat;
 static struct perfstat		*VSC_C_main = &_perfstat;
@@ -232,6 +239,7 @@ static double	boottime;
 
 static void	EVT_Add(struct worker *wrk, int want, int fd, void *arg);
 static void	EVT_Del(struct worker *wrk, int fd);
+static void	SES_Acct(struct sess *sp);
 static void	SES_Delete(struct sess *sp);
 static int	SES_Schedule(struct sess *sp);
 static void	SES_Wait(struct sess *sp, int want);
@@ -347,9 +355,19 @@ cnt_timeout(struct sess *sp)
 
 	switch (sp->prevstep) {
 	case STP_HTTP_CONNECT:
+		if (isnan(sp->t_connend))
+			sp->t_connend = TIM_real();
+		sp->step = STP_HTTP_ERROR;
+		break;
 	case STP_HTTP_TXREQ:
 	case STP_HTTP_RXRESP_HDR:
+		if (isnan(sp->t_fbend))
+			sp->t_fbend = TIM_real();
+		sp->step = STP_HTTP_ERROR;
+		break;
 	case STP_HTTP_RXRESP_BODY:
+		if (isnan(sp->t_bodyend))
+			sp->t_bodyend = TIM_real();
 		sp->step = STP_HTTP_ERROR;
 		break;
 	default:
@@ -436,6 +454,8 @@ cnt_http_connect(struct sess *sp)
 	    url->sockaddrlen);
 	if (ret == -1) {
 		if (errno != EINPROGRESS) {
+			if (isnan(sp->t_connend))
+				sp->t_connend = TIM_real();
 			fprintf(stderr, "connect(2) error: %d %s\n", errno,
 			    strerror(errno));
 			sp->step = STP_HTTP_ERROR;
@@ -825,6 +845,7 @@ cnt_done(struct sess *sp)
 	CHECK_OBJ_NOTNULL(sp, SESS_MAGIC);
 
 	sp->t_done = TIM_real();
+	SES_Acct(sp);
 
 	assert(sp->fd == -1);
 	SES_Delete(sp);
@@ -1126,6 +1147,18 @@ ses_setup(struct sessmem *sm)
 	sp->mysockaddr = (void*)(&sm->sockaddr[1]);
 	sp->mysockaddrlen = sizeof(sm->sockaddr[1]);
 	sp->mysockaddr->ss_family = PF_UNSPEC;
+}
+
+static void
+SES_Acct(struct sess *sp)
+{
+
+	assert(!isnan(sp->t_connstart) && !isnan(sp->t_connend));
+	VSC_C_main->t_conntotal += sp->t_connend - sp->t_connstart;
+	assert(!isnan(sp->t_fbstart) && !isnan(sp->t_fbend));
+	VSC_C_main->t_fbtotal += sp->t_fbend - sp->t_fbstart;
+	assert(!isnan(sp->t_bodystart) && !isnan(sp->t_bodyend));
+	VSC_C_main->t_bodytotal += sp->t_bodyend - sp->t_bodystart;
 }
 
 /*--------------------------------------------------------------------
