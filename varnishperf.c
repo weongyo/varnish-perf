@@ -1153,12 +1153,15 @@ static void
 SES_Acct(struct sess *sp)
 {
 
-	assert(!isnan(sp->t_connstart) && !isnan(sp->t_connend));
-	VSC_C_main->t_conntotal += sp->t_connend - sp->t_connstart;
-	assert(!isnan(sp->t_fbstart) && !isnan(sp->t_fbend));
-	VSC_C_main->t_fbtotal += sp->t_fbend - sp->t_fbstart;
-	assert(!isnan(sp->t_bodystart) && !isnan(sp->t_bodyend));
-	VSC_C_main->t_bodytotal += sp->t_bodyend - sp->t_bodystart;
+	if (!isnan(sp->t_connstart) &&
+	    !isnan(sp->t_connend))
+		VSC_C_main->t_conntotal += sp->t_connend - sp->t_connstart;
+	if (!isnan(sp->t_fbstart) &&
+	    !isnan(sp->t_fbend))
+		VSC_C_main->t_fbtotal += sp->t_fbend - sp->t_fbstart;
+	if (!isnan(sp->t_bodystart) &&
+	    !isnan(sp->t_bodyend))
+		VSC_C_main->t_bodytotal += sp->t_bodyend - sp->t_bodystart;
 }
 
 /*--------------------------------------------------------------------
