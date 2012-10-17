@@ -252,8 +252,14 @@ static int	c_arg = 1;
  * per a second.
  */
 static int	r_arg = 1;
-
+/*
+ * Boot-up time from TIM_real().
+ */
 static double	boottime;
+/*
+ * Default value is 0 but 1 if SIGINT is delivered.
+ */
+static int	stop;
 
 static void	EVT_Add(struct worker *wrk, int want, int fd, void *arg);
 static void	EVT_Del(struct worker *wrk, int fd);
@@ -1358,6 +1364,13 @@ SCH_stat(void)
 }
 
 static void
+SCH_summary(void)
+{
+
+	fprintf(stdout, "Help me!\n");
+}
+
+static void
 SCH_tick_1s(void *arg)
 {
 	struct sched *scp;
@@ -1395,13 +1408,21 @@ SCH_thread(void *arg)
 	callout_init(&scp->co, 0);
 	callout_reset(&scp->cb, &scp->co, CALLOUT_SECTOTICKS(1),
 	    SCH_tick_1s, &sc);
-	while (1) {
+	while (!stop) {
 		COT_ticks(&scp->cb);
 		COT_clock(&scp->cb);
 		TIM_sleep(0.1);
 	}
-
+	SCH_summary();
 	NEEDLESS_RETURN(NULL);
+}
+
+static void
+PEF_sigint(int no)
+{
+
+	(void)no;
+	stop = 1;
 }
 
 static void
@@ -1429,8 +1450,6 @@ PEF_Run(void)
 		AZ(pthread_create(&tp[i], NULL, WRK_thread, &wq));
 	AZ(pthread_create(&schedtp, NULL, SCH_thread, &wq));
 	AZ(pthread_join(schedtp, NULL));
-	for (i = 0; i < c_arg; i++)
-		AZ(pthread_join(tp[i], NULL));
 }
 
 /*--------------------------------------------------------------------*/
@@ -1572,6 +1591,7 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
+	(void)signal(SIGINT, PEF_sigint);
 	(void)signal(SIGPIPE, SIG_IGN);
 
 	LCK_Init();
