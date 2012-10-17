@@ -453,7 +453,9 @@ cnt_start(struct sess *sp)
 static int
 cnt_http_start(struct sess *sp)
 {
+	struct srcip *sip;
 	int ret;
+	static int no = 0;
 
 	/* XXX doesn't care for IPv6 at all */
 	sp->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -465,9 +467,20 @@ cnt_http_start(struct sess *sp)
 	}
 	ret = VTCP_nonblocking(sp->fd);
 	if (ret != 0) {
-		fprintf(stderr, "VTCP_nonblocking() error\n");
+		fprintf(stderr, "VTCP_nonblocking() error.\n");
 		sp->step = STP_HTTP_ERROR;
 		return (0);
+	}
+	if (num_srcips > 0) {
+		/* Try a source IP address in round-robin manner. */
+		sip = &srcips[no++ % num_srcips];
+		if (bind(sp->fd, (struct sockaddr *)&sip->sockaddr,
+		    sip->sockaddrlen)) {
+			fprintf(stderr, "bind(2) with %s error: %d %s\n",
+			    sip->ip, errno, strerror(errno));
+			sp->step = STP_HTTP_ERROR;
+			return (0);
+		}
 	}
 	sp->vsb = VSB_new_auto();
 	AN(sp->vsb);
