@@ -358,7 +358,6 @@ static int
 cnt_first(struct sess *sp)
 {
 
-	sp->t_start = TIM_real();
 	sp->step = STP_START;
 	return (0);
 }
@@ -375,6 +374,7 @@ cnt_start(struct sess *sp)
 
 	callout_init(&sp->co, 0);
 	sp->url = &urls[cnt++ % num_urls];
+	sp->t_start = TIM_real();
 
 	sp->step = STP_HTTP_START;
 	return (0);
