@@ -1020,6 +1020,14 @@ WRK_thread(void *arg)
 		WQ_LOCK(qp);
 		if (w->nwant > 0) {
 			WQ_UNLOCK(qp);
+			/*
+			 * XXX WRONG EVENT-MODEL.  With current approach, CPU
+			 * burning could happen if
+			 *
+			 *  - There are some latency between the perf server and
+			 *    the target server.
+			 *  - The queue length is very long.
+			 */
 			n = epoll_wait(w->fd, ev, EPOLLEVENT_MAX, 0);
 			for (ep = ev, i = 0; i < n; i++, ep++) {
 				CAST_OBJ_NOTNULL(sp, ep->data.ptr, SESS_MAGIC);
@@ -1335,6 +1343,8 @@ SCH_stat(void)
 	    VSC_C_1s->t_fbtotal / VSC_C_1s->n_fb, VSC_C_1s->t_fbmax);
 	fprintf(stdout, " | %.3f / %.3f / %.3f", VSC_C_1s->t_bodymin,
 	    VSC_C_1s->t_bodytotal / VSC_C_1s->n_body, VSC_C_1s->t_bodymax);
+	fprintf(stdout, " %jd", VSC_C_main->n_txbytes - prev.n_txbytes);
+	fprintf(stdout, " %jd", VSC_C_main->n_rxbytes - prev.n_rxbytes);
 	fprintf(stdout, " [%jd]\n", VSC_C_main->n_timeout);
 
 	prev = *VSC_C_main;
