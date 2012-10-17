@@ -143,6 +143,9 @@ struct sess {
 #define	MAXHDR			64
 	char			*resphdr[MAXHDR];
 
+	double			t_start;
+	double			t_done;
+
 	struct sessmem		*mem;
 	VTAILQ_ENTRY(sess)	poollist;
 };
@@ -355,6 +358,7 @@ static int
 cnt_first(struct sess *sp)
 {
 
+	sp->t_start = TIM_real();
 	sp->step = STP_START;
 	return (0);
 }
@@ -781,6 +785,8 @@ cnt_done(struct sess *sp)
 
 	CHECK_OBJ_NOTNULL(sp, SESS_MAGIC);
 
+	sp->t_done = TIM_real();
+
 	assert(sp->fd == -1);
 	SES_Delete(sp);
 	return (1);
@@ -909,7 +915,7 @@ WRK_thread(void *arg)
 	struct sess *sp;
 	struct worker *w, ww;
 	struct wq *qp;
-	int empty, i, n;
+	int i, n;
 
 	CAST_OBJ_NOTNULL(qp, arg, WQ_MAGIC);
 
@@ -933,10 +939,8 @@ WRK_thread(void *arg)
 
 		WQ_LOCK(qp);
 		if (w->nwant > 0) {
-			empty = VTAILQ_EMPTY(&qp->queue);
 			WQ_UNLOCK(qp);
-			n = epoll_wait(w->fd, ev, EPOLLEVENT_MAX,
-			    empty ? 1000 : 0);
+			n = epoll_wait(w->fd, ev, EPOLLEVENT_MAX, 0);
 			for (ep = ev, i = 0; i < n; i++, ep++) {
 				CAST_OBJ_NOTNULL(sp, ep->data.ptr, SESS_MAGIC);
 				assert(w == sp->wrk);
