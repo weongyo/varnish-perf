@@ -890,6 +890,7 @@ WRK_thread(void *arg)
 				continue;
 			}
 		}
+		AZ(w->sp);
 		if ((w->sp = VTAILQ_FIRST(&qp->queue)) != NULL) {
 			/* Process queued requests, if any */
 			VTAILQ_REMOVE(&qp->queue, w->sp, poollist);
