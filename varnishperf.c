@@ -102,6 +102,8 @@ struct perfstat {
 	uint64_t		n_req;
 	uint64_t		n_httpok;
 	uint64_t		n_httperror;
+	uint64_t		n_rxbytes;
+	uint64_t		n_txbytes;
 
 	double			t_conntotal;
 	double			t_fbtotal;
@@ -535,6 +537,7 @@ cnt_http_txreq(struct sess *sp)
 		return (0);
 	}
 	sp->woffset += l;
+	VSC_C_main->n_txbytes += l;
 	if (sp->woffset != VSB_len(sp->vsb)) {
 wantwrite:
 		callout_reset(&sp->wrk->cb, &sp->co,
@@ -724,6 +727,7 @@ retry:
 	}
 	if (isnan(sp->t_fbend))
 		sp->t_fbend = TIM_real();
+	VSC_C_main->n_rxbytes += l;
 	sp->roffset += l;
 	sp->resp[sp->roffset] = '\0';
 	if (sp->roffset >= sizeof(sp->resp)) {
