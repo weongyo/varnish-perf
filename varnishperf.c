@@ -80,6 +80,9 @@ struct perfstat {
 	uint64_t		n_sess;
 	uint64_t		n_timeout;
 	uint64_t		n_hitlimit;
+	uint64_t		n_req;
+	uint64_t		n_httpok;
+	uint64_t		n_httperror;
 };
 static struct perfstat		_perfstat;
 static struct perfstat		*VSC_C_main = &_perfstat;
@@ -377,6 +380,8 @@ static int
 cnt_start(struct sess *sp)
 {
 	static int cnt = 0;
+
+	VSC_C_main->n_req++;
 
 	callout_init(&sp->co, 0);
 	sp->url = &urls[cnt++ % num_urls];
@@ -767,6 +772,8 @@ cnt_http_ok(struct sess *sp)
 	long int http_status;
 	char *endptr = NULL;
 
+	VSC_C_main->n_httpok++;
+
 	if (sp->resphdr[1] != NULL) {
 		errno = 0;
 		http_status = strtol(sp->resphdr[1], &endptr, 10);
@@ -786,6 +793,7 @@ static int
 cnt_http_error(struct sess *sp)
 {
 
+	VSC_C_main->n_httperror++;
 	sp->step = STP_HTTP_DONE;
 	return (0);
 }
