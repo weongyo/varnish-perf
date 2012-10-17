@@ -58,11 +58,18 @@ struct worker;
 /*--------------------------------------------------------------------*/
 
 struct params {
+	/* Timeouts */
+	unsigned		connect_timeout;
+	unsigned		read_timeout;
+	unsigned		write_timeout;
 	/* Control diagnostic code */
 	unsigned		diag_bitmap;
 };
 static struct params		_params = {
-	.diag_bitmap = 0x0
+	.connect_timeout	= 3,
+	.read_timeout		= 6,
+	.write_timeout		= 6,
+	.diag_bitmap		= 0x0
 };
 static struct params		*params = &_params;
 
@@ -406,7 +413,8 @@ cnt_http_connect(struct sess *sp)
 			return (0);
 		}
 		callout_reset(&sp->wrk->cb, &sp->co,
-		    CALLOUT_SECTOTICKS(3 /* XXX */), cnt_timeout_tick, sp);
+		    CALLOUT_SECTOTICKS(params->connect_timeout),
+		    cnt_timeout_tick, sp);
 		SES_Wait(sp, SESS_WANT_WRITE);
 		return (1);
 	}
@@ -460,7 +468,8 @@ cnt_http_txreq(struct sess *sp)
 	if (sp->woffset != VSB_len(sp->vsb)) {
 wantwrite:
 		callout_reset(&sp->wrk->cb, &sp->co,
-		    CALLOUT_SECTOTICKS(3 /* XXX */), cnt_timeout_tick, sp);
+		    CALLOUT_SECTOTICKS(params->write_timeout), cnt_timeout_tick,
+		    sp);
 		SES_Wait(sp, SESS_WANT_WRITE);
 		return (1);
 	}
@@ -587,7 +596,7 @@ retry:
 	if (l <= 0) {
 		if (l == -1 && errno == EAGAIN) {
 			callout_reset(&sp->wrk->cb, &sp->co,
-			    CALLOUT_SECTOTICKS(3 /* XXX */),
+			    CALLOUT_SECTOTICKS(params->read_timeout),
 			    cnt_timeout_tick, sp);
 			SES_Wait(sp, SESS_WANT_READ);
 			return (1);
@@ -645,7 +654,7 @@ cnt_http_rxresp_body(struct sess *sp)
 	if (l == -1) {
 		if (l == -1 && errno == EAGAIN) {
 			callout_reset(&sp->wrk->cb, &sp->co,
-			    CALLOUT_SECTOTICKS(3 /* XXX */),
+			    CALLOUT_SECTOTICKS(params->read_timeout),
 			    cnt_timeout_tick, sp);
 			SES_Wait(sp, SESS_WANT_READ);
 			return (1);
@@ -1167,8 +1176,8 @@ SCH_thread(void *arg)
 	CAST_OBJ_NOTNULL(scp->qp, arg, WQ_MAGIC);
 	COT_init(&scp->cb);
 	callout_init(&scp->co, 0);
-	callout_reset(&scp->cb, &scp->co, CALLOUT_SECTOTICKS(1), SCH_tick_1s,
-	    &sc);
+	callout_reset(&scp->cb, &scp->co, CALLOUT_SECTOTICKS(1),
+	    SCH_tick_1s, &sc);
 	while (1) {
 		COT_ticks(&scp->cb);
 		COT_clock(&scp->cb);
