@@ -883,7 +883,10 @@ WRK_thread(void *arg)
 				sp->wrk = NULL;
 				callout_stop(&w->cb, &sp->co);
 				EVT_Del(w, sp->fd);
-				WRK_QueueInsert(qp, sp, 1);
+				WQ_UNLOCK(qp);
+				sp->wrk = w;
+				CNT_Session(sp);
+				WQ_LOCK(qp);
 			}
 			if (VTAILQ_EMPTY(&qp->queue)) {
 				WQ_UNLOCK(qp);
