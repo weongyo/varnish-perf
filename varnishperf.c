@@ -145,6 +145,12 @@ struct sess {
 
 	double			t_start;
 	double			t_done;
+	double			t_connstart;
+	double			t_connend;
+	double			t_fbstart;
+	double			t_fbend;
+	double			t_bodystart;
+	double			t_bodyend;
 
 	struct sessmem		*mem;
 	VTAILQ_ENTRY(sess)	poollist;
@@ -375,6 +381,13 @@ cnt_start(struct sess *sp)
 	callout_init(&sp->co, 0);
 	sp->url = &urls[cnt++ % num_urls];
 	sp->t_start = TIM_real();
+	sp->t_connstart = NAN;
+	sp->t_connend = NAN;
+	sp->t_fbstart = NAN;
+	sp->t_fbend = NAN;
+	sp->t_bodystart = NAN;
+	sp->t_bodyend = NAN;
+	sp->t_done = NAN;
 
 	sp->step = STP_HTTP_START;
 	return (0);
@@ -411,6 +424,9 @@ cnt_http_connect(struct sess *sp)
 	struct url *url = sp->url;
 	int ret;
 
+	if (isnan(sp->t_connstart))
+		sp->t_connstart = TIM_real();
+
 	ret = connect(sp->fd, (struct sockaddr *)&url->sockaddr,
 	    url->sockaddrlen);
 	if (ret == -1) {
@@ -426,6 +442,8 @@ cnt_http_connect(struct sess *sp)
 		SES_Wait(sp, SESS_WANT_WRITE);
 		return (1);
 	}
+	if (isnan(sp->t_connend))
+		sp->t_connend = TIM_real();
 	sp->step = STP_HTTP_BUILDREQ;
 	return (0);
 }
@@ -459,6 +477,9 @@ cnt_http_txreq(struct sess *sp)
 {
 	struct url *url = sp->url;
 	ssize_t l;
+
+	if (isnan(sp->t_fbstart))
+		sp->t_fbstart = TIM_real();
 
 	assert(VSB_len(sp->vsb) - sp->woffset > 0);
 	l = write(sp->fd, VSB_data(sp->vsb) + sp->woffset,
@@ -646,6 +667,8 @@ retry:
 			SES_Wait(sp, SESS_WANT_READ);
 			return (1);
 		}
+		if (isnan(sp->t_fbend))
+			sp->t_fbend = TIM_real();
 		if (l == 0) {
 			fprintf(stderr,
 			    "[ERROR] %s: read(2) error: unexpected EOF"
@@ -658,6 +681,8 @@ retry:
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
+	if (isnan(sp->t_fbend))
+		sp->t_fbend = TIM_real();
 	sp->roffset += l;
 	sp->resp[sp->roffset] = '\0';
 	if (sp->roffset >= sizeof(sp->resp)) {
@@ -675,6 +700,8 @@ retry:
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
+	if (isnan(sp->t_bodystart))
+		sp->t_bodystart = TIM_real();
 	/* Handles sp->resp buffer remained. */
 	l = sp->roffset;
 	sp->roffset = 0;
@@ -706,11 +733,15 @@ cnt_http_rxresp_body(struct sess *sp)
 			SES_Wait(sp, SESS_WANT_READ);
 			return (1);
 		}
+		if (isnan(sp->t_bodyend))
+			sp->t_bodyend = TIM_real();
 		fprintf(stderr, "read(2) error: %d %s\n", errno,
 		    strerror(errno));
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
+	if (isnan(sp->t_bodyend))
+		sp->t_bodyend = TIM_real();
 	/*
 	 * Got a EOF from the sender.  Checks the body length if
 	 * Content-Length header exists.
@@ -1197,7 +1228,7 @@ static void
 SCH_stat(void)
 {
 
-	fprintf(stderr, "%jd %jd %jd\n",
+	fprintf(stderr, "n_sess %jd n_timeout %jd n_hitlimit %jd\n",
 	    VSC_C_main->n_sess, VSC_C_main->n_timeout, VSC_C_main->n_hitlimit);
 }
 
