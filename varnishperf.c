@@ -116,6 +116,10 @@ struct sess {
 	enum step		step;
 	int			fd;
 
+#define	STEPHIST_MAX		64
+	enum step		stephist[STEPHIST_MAX];
+	int			nstephist;
+
 	struct url		*url;
 
 	socklen_t		mysockaddrlen;
@@ -774,6 +778,8 @@ CNT_Session(struct sess *sp)
 		 */
 		CHECK_OBJ_NOTNULL(sp, SESS_MAGIC);
 		CHECK_OBJ_NOTNULL(sp->wrk, WORKER_MAGIC);
+
+		sp->stephist[sp->nstephist++ % STEPHIST_MAX] = sp->step;
 
 		switch (sp->step) {
 #define STEP(l,u) \
