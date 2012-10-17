@@ -215,11 +215,14 @@ static int	c_arg = 1;
  */
 static int	r_arg = 1;
 
+static double	boottime;
+
 static void	EVT_Add(struct worker *wrk, int want, int fd, void *arg);
 static void	EVT_Del(struct worker *wrk, int fd);
 static void	SES_Delete(struct sess *sp);
 static int	SES_Schedule(struct sess *sp);
 static void	SES_Wait(struct sess *sp, int want);
+static double	TIM_real(void);
 
 /*--------------------------------------------------------------------*/
 
@@ -905,7 +908,7 @@ WRK_thread(void *arg)
 	struct sess *sp;
 	struct worker *w, ww;
 	struct wq *qp;
-	int i, n;
+	int empty, i, n;
 
 	CAST_OBJ_NOTNULL(qp, arg, WQ_MAGIC);
 
@@ -928,8 +931,10 @@ WRK_thread(void *arg)
 
 		WQ_LOCK(qp);
 		if (w->nwant > 0) {
+			empty = VTAILQ_EMPTY(&qp->queue);
 			WQ_UNLOCK(qp);
-			n = epoll_wait(w->fd, ev, EPOLLEVENT_MAX, 1000);
+			n = epoll_wait(w->fd, ev, EPOLLEVENT_MAX,
+			    empty ? 1000 : 0);
 			WQ_LOCK(qp);
 			for (ep = ev, i = 0; i < n; i++, ep++) {
 				CAST_OBJ_NOTNULL(sp, ep->data.ptr, SESS_MAGIC);
@@ -974,6 +979,15 @@ WRK_thread(void *arg)
 }
 
 /*--------------------------------------------------------------------*/
+
+static double
+TIM_real(void)
+{
+	struct timespec ts;
+
+	assert(clock_gettime(CLOCK_REALTIME, &ts) == 0);
+	return (ts.tv_sec + 1e-9 * ts.tv_nsec);
+}
 
 static struct timespec
 TIM_timespec(double t)
@@ -1230,6 +1244,7 @@ static void
 PEF_Init(void)
 {
 
+	boottime = TIM_real();
 	Lck_New(&ses_mem_mtx, "Session Memory");
 	Lck_New(&ses_stat_mtx, "Session Statistics");
 }

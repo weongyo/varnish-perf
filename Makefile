@@ -45,7 +45,7 @@ CFLAGS= \
 
 
 LDFLAGS=\
-	-lm -lpthread
+	-lm -lpthread -lrt
 
 all: varnishperf
 
