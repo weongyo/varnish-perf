@@ -1257,6 +1257,8 @@ URL_readfile(char *file)
 		exit(1);
 	}
 
+	fprintf(stdout, "[INFO] Reading %s file.\n", file);
+
 	max_urls = 100;
 	urls = (struct url *)malloc(max_urls * sizeof(struct url));
 	num_urls = 0;
@@ -1303,6 +1305,9 @@ URL_readfile(char *file)
 		URL_resolv(num_urls);
 		++num_urls;
 	}
+
+	fprintf(stdout, "[INFO] Total %d URLs are loaded from %s file.\n",
+	    num_urls, file);
 }
 
 static void
