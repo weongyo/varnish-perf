@@ -70,6 +70,7 @@ static struct params		*params = &_params;
 
 struct perfstat {
 	uint64_t		n_sess;
+	uint64_t		n_timeout;
 };
 static struct perfstat		_perfstat;
 static struct perfstat		*VSC_C_main = &_perfstat;
@@ -313,6 +314,8 @@ cnt_timeout_tick(void *arg)
 static int
 cnt_timeout(struct sess *sp)
 {
+
+	VSC_C_main->n_timeout++;
 
 	switch (sp->prevstep) {
 	case STP_HTTP_CONNECT:
