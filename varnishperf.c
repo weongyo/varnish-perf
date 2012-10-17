@@ -27,6 +27,7 @@
  * SUCH DAMAGE.
  */
 
+#include <sys/param.h>
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <netinet/in.h>
@@ -52,6 +53,7 @@
 
 #define VTCP_ADDRBUFSIZE	64
 #define VTCP_PORTBUFSIZE	16
+#define TIM_FORMAT_SIZE		30
 #define NEEDLESS_RETURN(foo)	return (foo)
 
 struct worker;
@@ -76,6 +78,23 @@ static struct params		*params = &_params;
 
 /*--------------------------------------------------------------------*/
 
+struct perfstat_1s {
+	uint32_t		n_conn;
+	double			t_conntotal;
+	double			t_connmin;
+	double			t_connmax;
+	uint32_t		n_fb;
+	double			t_fbtotal;
+	double			t_fbmin;
+	double			t_fbmax;
+	uint32_t		n_body;
+	double			t_bodytotal;
+	double			t_bodymin;
+	double			t_bodymax;
+};
+static struct perfstat_1s	_perfstat_1s;
+static struct perfstat_1s	*VSC_C_1s = &_perfstat_1s;
+
 struct perfstat {
 	uint64_t		n_sess;
 	uint64_t		n_timeout;
@@ -85,9 +104,6 @@ struct perfstat {
 	uint64_t		n_httperror;
 
 	double			t_conntotal;
-	double			t_connmin;
-	double			t_connavg;
-	double			t_connmax;
 	double			t_fbtotal;
 	double			t_bodytotal;
 };
@@ -1053,6 +1069,17 @@ TIM_real(void)
 	return (ts.tv_sec + 1e-9 * ts.tv_nsec);
 }
 
+static void
+TIM_format(double t, char *p)
+{
+	struct tm tm;
+	time_t tt;
+
+	tt = (time_t) t;
+	(void)gmtime_r(&tt, &tm);
+	AN(strftime(p, TIM_FORMAT_SIZE, "%H:%M:%S", &tm));
+}
+
 static struct timespec
 TIM_timespec(double t)
 {
@@ -1152,16 +1179,35 @@ ses_setup(struct sessmem *sm)
 static void
 SES_Acct(struct sess *sp)
 {
+	double diff;
 
 	if (!isnan(sp->t_connstart) &&
-	    !isnan(sp->t_connend))
-		VSC_C_main->t_conntotal += sp->t_connend - sp->t_connstart;
+	    !isnan(sp->t_connend)) {
+		diff = sp->t_connend - sp->t_connstart;
+		VSC_C_1s->n_conn++;
+		VSC_C_1s->t_conntotal += diff;
+		VSC_C_1s->t_connmin = MIN(VSC_C_1s->t_connmin, diff);
+		VSC_C_1s->t_connmax = MAX(VSC_C_1s->t_connmax, diff);
+		VSC_C_main->t_conntotal += diff;
+	}
 	if (!isnan(sp->t_fbstart) &&
-	    !isnan(sp->t_fbend))
-		VSC_C_main->t_fbtotal += sp->t_fbend - sp->t_fbstart;
+	    !isnan(sp->t_fbend)) {
+		diff = sp->t_fbend - sp->t_fbstart;
+		VSC_C_1s->n_fb++;
+		VSC_C_1s->t_fbtotal += diff;
+		VSC_C_1s->t_fbmin = MIN(VSC_C_1s->t_fbmin, diff);
+		VSC_C_1s->t_fbmax = MAX(VSC_C_1s->t_fbmax, diff);
+		VSC_C_main->t_fbtotal += diff;
+	}
 	if (!isnan(sp->t_bodystart) &&
-	    !isnan(sp->t_bodyend))
-		VSC_C_main->t_bodytotal += sp->t_bodyend - sp->t_bodystart;
+	    !isnan(sp->t_bodyend)) {
+		diff = sp->t_bodyend - sp->t_bodystart;
+		VSC_C_1s->n_body++;
+		VSC_C_1s->t_bodytotal += diff;
+		VSC_C_1s->t_bodymin = MIN(VSC_C_1s->t_bodymin, diff);
+		VSC_C_1s->t_bodymax = MAX(VSC_C_1s->t_bodymax, diff);
+		VSC_C_main->t_bodytotal += diff;
+	}
 }
 
 /*--------------------------------------------------------------------
@@ -1271,9 +1317,30 @@ struct sched {
 static void
 SCH_stat(void)
 {
+	static struct perfstat prev = { 0, };
+	double now = TIM_real();
+	char buf[TIM_FORMAT_SIZE];
 
-	fprintf(stderr, "n_sess %jd n_timeout %jd n_hitlimit %jd\n",
-	    VSC_C_main->n_sess, VSC_C_main->n_timeout, VSC_C_main->n_hitlimit);
+	TIM_format(now - boottime, buf);
+	fprintf(stdout, "%s", buf);
+	fprintf(stdout, " %8jd", VSC_C_main->n_req);
+	fprintf(stdout, " %5jd", VSC_C_main->n_req - prev.n_req);
+	fprintf(stdout, " %.3f / %.3f / %.3f", VSC_C_1s->t_connmin,
+	    VSC_C_1s->t_conntotal / VSC_C_1s->n_conn, VSC_C_1s->t_connmax);
+	fprintf(stdout, " | %.3f / %.3f / %.3f", VSC_C_1s->t_fbmin,
+	    VSC_C_1s->t_fbtotal / VSC_C_1s->n_fb, VSC_C_1s->t_fbmax);
+	fprintf(stdout, " | %.3f / %.3f / %.3f", VSC_C_1s->t_bodymin,
+	    VSC_C_1s->t_bodytotal / VSC_C_1s->n_body, VSC_C_1s->t_bodymax);
+	fprintf(stdout, " [%jd]\n", VSC_C_main->n_timeout);
+
+	prev = *VSC_C_main;
+	bzero(VSC_C_1s, sizeof(*VSC_C_1s));
+	VSC_C_1s->t_connmin = 1000.;
+	VSC_C_1s->t_connmax = 0.;
+	VSC_C_1s->t_fbmin = 1000.;
+	VSC_C_1s->t_fbmax = 0.;
+	VSC_C_1s->t_bodymin = 1000.;
+	VSC_C_1s->t_bodymax = 0.;
 }
 
 static void
