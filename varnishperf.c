@@ -1055,6 +1055,10 @@ SES_New(void)
 	}
 	/* no lock needed */
 	n_sess_grab++;
+	AZ(pthread_mutex_lock(&ses_stat_mtx));
+	VSC_C_main->n_sess = n_sess_grab - n_sess_rel;
+	AZ(pthread_mutex_unlock(&ses_stat_mtx));
+
 	return (sp);
 }
 
