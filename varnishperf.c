@@ -1367,7 +1367,31 @@ static void
 SCH_summary(void)
 {
 
-	fprintf(stdout, "Help me!\n");
+/*
+Total: connections 34184 requests 34166 replies 33894 test-duration 1.388 s
+
+Connection rate: 24626.9 conn/s (0.0 ms/conn, <=300 concurrent connections)
+Connection time [ms]: min 0.7 avg 11.6 max 99.9 median 2.5 stddev 19.0
+Connection time [ms]: connect 0.5
+Connection length [replies/conn]: 1.000
+
+Request rate: 24613.9 req/s (0.0 ms/req)
+Request size [B]: 66.0
+
+Reply rate [replies/s]: min 0.0 avg 0.0 max 0.0 stddev 0.0 (0 samples)
+Reply time [ms]: response 11.1 transfer 0.0
+Reply size [B]: header 328.0 content 1.0 footer 0.0 (total 329.0)
+Reply status: 1xx=0 2xx=33894 3xx=0 4xx=0 5xx=0
+        200=33894
+
+CPU time [s]: user 0.23 system 1.16 (user 16.6% system 83.3% total 99.9%)
+Net I/O: 9455.5 KB/s (77.5*10^6 bps)
+
+Errors: total 0 client-timo 0 socket-timo 0 connrefused 0 connreset 0
+Errors: fd-unavail 0 addrunavail 0 ftab-full 0 drop 0 incompleted 0
+Errors: closednoresp 0 sslerror 0 sslerror_syscall 0 other 0
+*/
+	fprintf(stdout, "TODO summary\n");
 }
 
 static void
