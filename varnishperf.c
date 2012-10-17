@@ -31,6 +31,7 @@
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <errno.h>
 #include <math.h>
 #include <netdb.h>
@@ -131,6 +132,15 @@ struct url {
 static struct url		*urls;
 static int			num_urls;
 static int			max_urls;
+
+struct srcip {
+	char			*ip;
+	struct sockaddr_storage sockaddr;
+	int			sockaddrlen;
+};
+static struct srcip		*srcips;
+static int			num_srcips;
+static int			max_srcips;
 
 /*--------------------------------------------------------------------*/
 
@@ -1479,6 +1489,51 @@ PEF_Run(void)
 /*--------------------------------------------------------------------*/
 
 static void
+SIP_readfile(const char* sip_file)
+{
+	struct sockaddr_in *sin4;
+	FILE* fp;
+	char line[5000];
+
+	fp = fopen(sip_file, "r");
+	if (fp == NULL) {
+		perror(sip_file);
+		exit(1);
+	}
+
+	max_srcips = 100;
+	srcips = (struct srcip *)malloc(max_srcips * sizeof(struct srcip));
+	num_srcips = 0;
+	while (fgets(line, sizeof(line), fp) != (char*) 0) {
+		/* Nuke trailing newline. */
+		if (line[strlen(line) - 1] == '\n')
+			line[strlen(line) - 1] = '\0';
+		if (strlen(line) <= 0)
+			continue;
+		/* Check for room in srcips. */
+		if (num_srcips >= max_srcips) {
+			max_srcips *= 2;
+			srcips = (struct srcip *)realloc((void *)srcips,
+			    max_srcips * sizeof(struct srcip));
+		}
+		/* Add to table. */
+		srcips[num_srcips].ip = strdup(line);
+		AN(srcips[num_srcips].ip);
+		(void)memset((void *)&srcips[num_srcips].sockaddr, 0,
+		    sizeof(srcips[num_srcips].sockaddr));
+		sin4 = (struct sockaddr_in *)&srcips[num_srcips].sockaddr;
+		if (!inet_aton(srcips[num_srcips].ip, &sin4->sin_addr)) {
+			(void)fprintf(stderr,
+			    "[ERROR] cannot convert source IP address %s\n",
+			    srcips[num_srcips].ip);
+			exit(1);
+		}
+		srcips[num_srcips].sockaddrlen = sizeof(*sin4);
+		++num_srcips;
+	}
+}
+
+static void
 URL_resolv(int n)
 {
 	struct hostent *he;
@@ -1504,7 +1559,7 @@ URL_resolv(int n)
 }
 
 static void
-URL_readfile(char *file)
+URL_readfile(const char *file)
 {
 	FILE *fp;
 	const char *http = "http://";
@@ -1588,8 +1643,9 @@ main(int argc, char *argv[])
 {
 	int ch;
 	char *end;
+	const char *s_arg = NULL;
 
-	while ((ch = getopt(argc, argv, "c:r:")) != -1) {
+	while ((ch = getopt(argc, argv, "c:r:s:")) != -1) {
 		switch (ch) {
 		case 'c':
 			errno = 0;
@@ -1607,6 +1663,9 @@ main(int argc, char *argv[])
 				exit(1);
 			}
 			break;
+		case 's':
+			s_arg = optarg;
+			break;
 		default:
 			usage();
 			/* NOTREACHED */
@@ -1620,6 +1679,8 @@ main(int argc, char *argv[])
 
 	LCK_Init();
 
+	if (s_arg != NULL)
+		SIP_readfile(s_arg);
 	for (;argc > 0; argc--, argv++)
 		URL_readfile(*argv);
 	if (num_urls == 0) {
