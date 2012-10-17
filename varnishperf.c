@@ -899,6 +899,7 @@ WRK_thread(void *arg)
 			VTAILQ_REMOVE(&qp->queue, w->sp, poollist);
 			qp->lqueue--;
 		} else {
+			assert(w->nwant == 0);
 			VTAILQ_INSERT_HEAD(&qp->idle, w, list);
 			AZ(pthread_cond_wait(&w->cond, &qp->mtx));
 		}
