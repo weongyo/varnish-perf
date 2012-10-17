@@ -179,6 +179,7 @@ struct worker {
 	struct sess		*sp;
 	struct callout_block	cb;
 	int			nwant;
+	pthread_t		owner;
 
 	pthread_cond_t		cond;
 	VTAILQ_ENTRY(worker)	list;
@@ -922,6 +923,7 @@ WRK_thread(void *arg)
 	assert(w->fd >= 0);
 	COT_init(&w->cb);
 	AZ(pthread_cond_init(&w->cond, NULL));
+	w->owner = pthread_self();
 
 	while (1) {
 		CHECK_OBJ_NOTNULL(w, WORKER_MAGIC);
@@ -1015,6 +1017,8 @@ EVT_Add(struct worker *wrk, int want, int fd, void *arg)
 {
 	struct epoll_event ev;
 
+	assert(pthread_equal(wrk->owner, pthread_self()));
+
 	AN(arg);
 	ev.data.ptr = arg;
 	ev.events = EPOLLERR;
@@ -1038,6 +1042,8 @@ static void
 EVT_Del(struct worker *wrk, int fd)
 {
 	struct epoll_event ev = { 0 , { 0 } };
+
+	assert(pthread_equal(wrk->owner, pthread_self()));
 
 	assert(fd >= 0);
 	AZ(epoll_ctl(wrk->fd, EPOLL_CTL_DEL, fd, &ev));
