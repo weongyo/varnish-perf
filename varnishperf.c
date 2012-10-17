@@ -1016,7 +1016,6 @@ EVT_Add(struct worker *wrk, int want, int fd, void *arg)
 	struct epoll_event ev;
 
 	assert(pthread_equal(wrk->owner, pthread_self()));
-	Lck_AssertNotHeld(&wq.mtx);
 
 	AN(arg);
 	ev.data.ptr = arg;
@@ -1043,7 +1042,6 @@ EVT_Del(struct worker *wrk, int fd)
 	struct epoll_event ev = { 0 , { 0 } };
 
 	assert(pthread_equal(wrk->owner, pthread_self()));
-	Lck_AssertNotHeld(&wq.mtx);
 
 	assert(fd >= 0);
 	AZ(epoll_ctl(wrk->fd, EPOLL_CTL_DEL, fd, &ev));
