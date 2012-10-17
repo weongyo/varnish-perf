@@ -71,6 +71,7 @@ static struct params		*params = &_params;
 struct perfstat {
 	uint64_t		n_sess;
 	uint64_t		n_timeout;
+	uint64_t		n_hitlimit;
 };
 static struct perfstat		_perfstat;
 static struct perfstat		*VSC_C_main = &_perfstat;
@@ -841,18 +842,21 @@ WRK_QueueSession(struct sess *sp)
 	return (1);
 }
 
-#define	EPOLLEVENT_MAX	(8 * 1024)
+#define	EPOLLEVENT_MAX	(64 * 1024)
 
 static void *
 WRK_thread(void *arg)
 {
-	struct epoll_event ev[EPOLLEVENT_MAX], *ep;
+	struct epoll_event *ev, *ep;
 	struct sess *sp;
 	struct worker *w, ww;
 	struct wq *qp;
 	int i, n;
 
 	CAST_OBJ_NOTNULL(qp, arg, WQ_MAGIC);
+
+	ev = malloc(sizeof(*ev) * EPOLLEVENT_MAX);
+	AN(ev);
 
 	w = &ww;
 	bzero(w, sizeof(*w));
@@ -1105,6 +1109,14 @@ struct sched {
 };
 
 static void
+SCH_stat(void)
+{
+
+	fprintf(stderr, "%jd %jd %jd\n",
+	    VSC_C_main->n_sess, VSC_C_main->n_timeout, VSC_C_main->n_hitlimit);
+}
+
+static void
 SCH_tick_1s(void *arg)
 {
 	struct sched *scp;
@@ -1113,11 +1125,17 @@ SCH_tick_1s(void *arg)
 
 	CAST_OBJ_NOTNULL(scp, arg, SCHED_MAGIC);
 
-	for (i = 0; i < r_arg && VSC_C_main->n_sess < r_arg; i++) {
+	for (i = 0; i < r_arg; i++) {
+		if (VSC_C_main->n_sess >= r_arg) {
+			VSC_C_main->n_hitlimit++;
+			break;
+		}
 		sp = SES_New();
 		AN(sp);
 		AZ(WRK_QueueSession(sp));
 	}
+
+	SCH_stat();
 
 	callout_reset(&scp->cb, &scp->co, CALLOUT_SECTOTICKS(1), SCH_tick_1s,
 	    arg);
