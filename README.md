@@ -9,11 +9,14 @@ How to compile
 
 It's really simple.
 
+<pre>
   # make depend
   # make
+</pre>
 
 How to use
 ==========
 
+<pre>
   # ./varnishperf
-
+</pre>
