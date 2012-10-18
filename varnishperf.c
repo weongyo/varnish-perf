@@ -1711,10 +1711,11 @@ static void
 usage(void)
 {
 
-	fprintf(stderr, "usage: varnishperf [options] urlfile\n");
-#define FMT "    %-28s # %s\n"
+	fprintf(stderr, "[INFO] usage: varnishperf [options] urlfile\n");
+#define FMT "[INFO]    %-28s # %s\n"
 	fprintf(stderr, FMT, "-c N", "Sets number of threads");
-	fprintf(stderr, FMT, "-r N", "Sets rate.");
+	fprintf(stderr, FMT, "-r N", "Sets rate");
+	fprintf(stderr, FMT, "-s file", "Sets file path containing src IP");
 	exit(1);
 }
 
@@ -1764,8 +1765,8 @@ main(int argc, char *argv[])
 	for (;argc > 0; argc--, argv++)
 		URL_readfile(*argv);
 	if (num_urls == 0) {
-		fprintf(stderr, "No URLs found.\n");
-		exit(1);
+		fprintf(stderr, "[ERROR] No URLs found.\n");
+		usage();
 	}
 	PEF_Init();
 	PEF_Run();
