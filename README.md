@@ -80,3 +80,9 @@ http://172.18.14.1:8080/1b
 [STAT]    31.302394  seconds    # Total time used for waiting the first byte after sending HTTP request
 [STAT]    1.489381   seconds    # Total time used for receiving the body
 </pre>
+
+Author
+======
+
+* Weongyo Jeong <weongyo@gmail.com>
+
