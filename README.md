@@ -4,6 +4,20 @@ Varnish-perf
 Varnish-perf is a simple HTTP performance testing tool to measure the maximum
 performance of target web server or cache server.
 
+Architecture
+============
+
+* The most of code are based on varnish-cache
+  (https://www.varnish-cache.org/).  That is the reason why this name is
+  including 'varnish'.
+
+* But all socket operations are non-blocking.  One thread is enough to
+  handle several thousand concurrent connections.
+
+* For edge case testing, sometimes one thread isn't enough to hit the
+  top.  So multiple threads are supported.  Even more one centralized
+  statistics.
+
 How to compile
 ==============
 
@@ -80,6 +94,11 @@ http://172.18.14.1:8080/1b
 [STAT]    31.302394  seconds    # Total time used for waiting the first byte after sending HTTP request
 [STAT]    1.489381   seconds    # Total time used for receiving the body
 </pre>
+
+License
+=======
+
+Simplified BSD (2-clause) license
 
 Author
 ======
