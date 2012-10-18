@@ -1365,7 +1365,7 @@ SCH_stat(void)
 	char buf[TIM_FORMAT_SIZE];
 
 	TIM_format(now - boottime, buf);
-	fprintf(stdout, "%s", buf);
+	fprintf(stdout, "[STAT] %s", buf);
 	fprintf(stdout, " %8jd", VSC_C_main->n_req);
 	fprintf(stdout, " %5jd", VSC_C_main->n_req - prev.n_req);
 	fprintf(stdout, " %.3f / %.3f / %.3f", VSC_C_1s->t_connmin,
