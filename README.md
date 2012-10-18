@@ -8,8 +8,8 @@ Architecture
 ============
 
 * The most of code are based on varnish-cache
-  (https://www.varnish-cache.org/).  That is the reason why this name is
-  including 'varnish'.
+  (https://www.varnish-cache.org/).  That is the reason why this is
+  including 'varnish' in its name.
 
 * But all socket operations are non-blocking.  One thread is enough to
   handle several thousand concurrent connections.
