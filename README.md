@@ -84,5 +84,5 @@ http://172.18.14.1:8080/1b
 Author
 ======
 
-* Weongyo Jeong <weongyo@gmail.com>
+* Weongyo Jeong - weongyo@gmail.com
 
