@@ -98,9 +98,11 @@ static struct perfstat_1s	_perfstat_1s;
 static struct perfstat_1s	*VSC_C_1s = &_perfstat_1s;
 
 struct perfstat {
-#define	PERFSTAT(a, b, c, d, e)	b a;
+#define	PERFSTAT_u64(a, b, c, d)	uint64_t a;
+#define	PERFSTAT_dbl(a, b, c, d)	double a;
 #include "stats.h"
-#undef PERFSTAT
+#undef PERFSTAT_dbl
+#undef PERFSTAT_u64
 };
 static struct perfstat		_perfstat;
 static struct perfstat		*VSC_C_main = &_perfstat;
@@ -1436,6 +1438,19 @@ SCH_summary(void)
 {
 
 	SCH_bottom();
+
+	fprintf(stdout, "[STAT] Summary:\n");
+#define FMT_u64 "[STAT]    %-10ju %-10s # %s\n"
+#define FMT_dbl "[STAT]    %-10f %-10s # %s\n"
+#define	PERFSTAT_u64(a, b, c, d)	\
+	fprintf(stdout, FMT_u64, VSC_C_main->a, d, c);
+#define	PERFSTAT_dbl(a, b, c, d)	\
+	fprintf(stdout, FMT_dbl, VSC_C_main->a, d, c);
+#include "stats.h"
+#undef PERFSTAT
+#undef FMT_dbl
+#undef FMT_u64
+
 /*
 Total: connections 34184 requests 34166 replies 33894 test-duration 1.388 s
 

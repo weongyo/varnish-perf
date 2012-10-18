@@ -24,19 +24,19 @@
  * SUCH DAMAGE.
  */
 
-PERFSTAT(n_sess,	uint64_t, 'g', "N session active", "sessions")
-PERFSTAT(n_timeout,	uint64_t, 'c', "N session timed out", "sessions")
-PERFSTAT(n_hitlimit,	uint64_t, 'c', "How many hit the rate limit", "times")
-PERFSTAT(n_req,		uint64_t, 'c', "N requests", "reqs")
-PERFSTAT(n_httpok,	uint64_t, 'c', "Successful HTTP request", "reqs")
-PERFSTAT(n_httperror,	uint64_t, 'c', "Failed HTTP request", "reqs")
-PERFSTAT(n_rxbytes,	uint64_t, 'c', "Total bytes varnishperf sent", "bytes")
-PERFSTAT(n_txbytes,	uint64_t, 'c', "Total bytes varnishperf got", "bytes")
-PERFSTAT(t_conntotal,	double,   'c', "Total time used for connect(2)",
+PERFSTAT_u64(n_sess,		'g', "N session active", "sessions")
+PERFSTAT_u64(n_timeout,		'c', "N session timed out", "sessions")
+PERFSTAT_u64(n_hitlimit,	'c', "How many hit the rate limit", "times")
+PERFSTAT_u64(n_req,		'c', "N requests", "reqs")
+PERFSTAT_u64(n_httpok,		'c', "Successful HTTP request", "reqs")
+PERFSTAT_u64(n_httperror,	'c', "Failed HTTP request", "reqs")
+PERFSTAT_u64(n_rxbytes,		'c', "Total bytes varnishperf got", "bytes")
+PERFSTAT_u64(n_txbytes,		'c', "Total bytes varnishperf send", "bytes")
+PERFSTAT_dbl(t_conntotal,	'c', "Total time used for connect(2)",
 				       "seconds")
-PERFSTAT(t_fbtotal,	double,   'c', "Total time used for waiting"
-				       " the first byte after sending HTTP"
-				       " request",
-				       "seconds")
-PERFSTAT(t_bodytotal,	double,   'c', "Total time used for receiving the body",
-				       "reqs")
+PERFSTAT_dbl(t_fbtotal,		'c', "Total time used for waiting"
+				     " the first byte after sending HTTP"
+				     " request",
+				     "seconds")
+PERFSTAT_dbl(t_bodytotal,	'c', "Total time used for receiving the body",
+				     "seconds")

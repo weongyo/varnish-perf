@@ -53,6 +53,17 @@ all: varnishperf
 varnishperf: $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LDFLAGS)
 
+depend:
+	@if ! test -f .depend; then \
+		touch .depend; \
+	fi
+	./mkdep -f .depend $(CFLAGS) $(SRCS)
+
 clean:
 	rm -f varnishperf $(OBJS) *~
 
+ifeq ($(wildcard .depend), )
+$(warning .depend fils is missed.  Runs 'make depend' first.)
+else
+include .depend
+endif
