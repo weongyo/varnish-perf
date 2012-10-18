@@ -1380,6 +1380,7 @@ static void
 SCH_bottom(void)
 {
 
+	/* XXX WG: I'm sure you didn't use your brain. */
 	fprintf(stdout, "[STAT] "
 	    "---------+----------+-------+"
 	    "-----------------------+"
