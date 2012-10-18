@@ -1424,6 +1424,7 @@ SCH_stat(void)
  	fprintf(stdout, " | %5s", sbuf);
 	fprintf(stdout, " | %jd\n", VSC_C_main->n_timeout);
 
+	/* Reset and Prepare */
 	prev = *VSC_C_main;
 	bzero(VSC_C_1s, sizeof(*VSC_C_1s));
 	VSC_C_1s->t_connmin = 1000.;
