@@ -519,13 +519,13 @@ static const char * const nl = "\r\n";
 static int
 cnt_http_buildreq(struct sess *sp)
 {
+	struct url *url = sp->url;
 	const char *req = "GET";
 	const char *proto = "HTTP/1.1";
-	const char *url = "/1b";
 	const char *hostname = "localhost";
 
 	VSB_clear(sp->vsb);
-	VSB_printf(sp->vsb, "%s %s %s%s", req, url, proto, nl);
+	VSB_printf(sp->vsb, "%s %s %s%s", req, url->path, proto, nl);
 	VSB_printf(sp->vsb, "Accept-Encoding: gzip, deflate%s", nl);
 	VSB_printf(sp->vsb, "Host: %s%s", hostname, nl);
 	VSB_printf(sp->vsb, "Connection: close%s", nl);
