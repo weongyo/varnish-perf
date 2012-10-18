@@ -98,19 +98,9 @@ static struct perfstat_1s	_perfstat_1s;
 static struct perfstat_1s	*VSC_C_1s = &_perfstat_1s;
 
 struct perfstat {
-	uint64_t		n_sess;
-	uint64_t		n_timeout;
-	uint64_t		n_hitlimit;
-	uint64_t		n_req;
-	uint64_t		n_httpok;
-	uint64_t		n_httperror;
-	uint64_t		n_rxbytes;
-	uint64_t		n_txbytes;
-	uint64_t		n_conn_established;
-
-	double			t_conntotal;
-	double			t_fbtotal;
-	double			t_bodytotal;
+#define	PERFSTAT(a, b, c, d, e)	b a;
+#include "stats.h"
+#undef PERFSTAT
 };
 static struct perfstat		_perfstat;
 static struct perfstat		*VSC_C_main = &_perfstat;
@@ -1470,7 +1460,6 @@ Errors: total 0 client-timo 0 socket-timo 0 connrefused 0 connreset 0
 Errors: fd-unavail 0 addrunavail 0 ftab-full 0 drop 0 incompleted 0
 Errors: closednoresp 0 sslerror 0 sslerror_syscall 0 other 0
 */
-	fprintf(stdout, "TODO summary\n");
 }
 
 static void
