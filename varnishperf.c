@@ -44,6 +44,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "humanize_number.h"
 #include "miniobj.h"
 #include "vas.h"
 #include "vcallout.h"
@@ -105,6 +106,7 @@ struct perfstat {
 	uint64_t		n_httperror;
 	uint64_t		n_rxbytes;
 	uint64_t		n_txbytes;
+	uint64_t		n_conn_established;
 
 	double			t_conntotal;
 	double			t_fbtotal;
@@ -1358,25 +1360,63 @@ struct sched {
 };
 
 static void
+SCH_hdr(void)
+{
+
+	fprintf(stdout, "[STAT] "
+	    " time    | total    | req   |"
+	    " connect time          |"
+	    " first byte time       |"
+	    " body time             |"
+	    " tx         | tx    | rx         | rx    |\n");
+	fprintf(stdout, "[STAT] "
+	    "         |          |       |"
+	    "   min     avg     max |"
+	    "   min     avg     max |"
+	    "   min     avg     max |"
+	    "            |       |            |       |\n");
+	fprintf(stdout, "[STAT] "
+	    "---------+----------+-------+"
+	    "-----------------------+"
+	    "-----------------------+"
+	    "-----------------------+"
+	    "------------+-------+------------+-------+\n");
+}
+
+static void
 SCH_stat(void)
 {
 	static struct perfstat prev = { 0, };
+	static int first = 1;
 	double now = TIM_real();
-	char buf[TIM_FORMAT_SIZE];
+	char buf[TIM_FORMAT_SIZE], sbuf[5];
+
+	if (first == 1) {
+		SCH_hdr();
+		first = 0;
+	}
 
 	TIM_format(now - boottime, buf);
 	fprintf(stdout, "[STAT] %s", buf);
-	fprintf(stdout, " %8jd", VSC_C_main->n_req);
-	fprintf(stdout, " %5jd", VSC_C_main->n_req - prev.n_req);
-	fprintf(stdout, " %.3f / %.3f / %.3f", VSC_C_1s->t_connmin,
+	fprintf(stdout, " | %8jd", VSC_C_main->n_req);
+	fprintf(stdout, " | %5jd", VSC_C_main->n_req - prev.n_req);
+	fprintf(stdout, " | %2.3f / %2.3f / %2.3f", VSC_C_1s->t_connmin,
 	    VSC_C_1s->t_conntotal / VSC_C_1s->n_conn, VSC_C_1s->t_connmax);
-	fprintf(stdout, " | %.3f / %.3f / %.3f", VSC_C_1s->t_fbmin,
+	fprintf(stdout, " | %2.3f / %2.3f / %2.3f", VSC_C_1s->t_fbmin,
 	    VSC_C_1s->t_fbtotal / VSC_C_1s->n_fb, VSC_C_1s->t_fbmax);
-	fprintf(stdout, " | %.3f / %.3f / %.3f", VSC_C_1s->t_bodymin,
+	fprintf(stdout, " | %2.3f / %2.3f / %2.3f", VSC_C_1s->t_bodymin,
 	    VSC_C_1s->t_bodytotal / VSC_C_1s->n_body, VSC_C_1s->t_bodymax);
-	fprintf(stdout, " %jd", VSC_C_main->n_txbytes - prev.n_txbytes);
-	fprintf(stdout, " %jd", VSC_C_main->n_rxbytes - prev.n_rxbytes);
-	fprintf(stdout, " [%jd]\n", VSC_C_main->n_timeout);
+	fprintf(stdout, " | %10ju", VSC_C_main->n_txbytes - prev.n_txbytes);
+	humanize_number(sbuf, sizeof(sbuf),
+	    (int64_t)(VSC_C_main->n_txbytes - prev.n_txbytes), "",
+	    HN_AUTOSCALE, HN_NOSPACE | HN_DECIMAL);
+ 	fprintf(stdout, " | %5s", sbuf);
+	fprintf(stdout, " | %10ju", VSC_C_main->n_txbytes - prev.n_txbytes);
+	humanize_number(sbuf, sizeof(sbuf),
+	    (int64_t)(VSC_C_main->n_rxbytes - prev.n_rxbytes), "",
+	    HN_AUTOSCALE, HN_NOSPACE | HN_DECIMAL);
+ 	fprintf(stdout, " | %5s", sbuf);
+	fprintf(stdout, " | [%jd]\n", VSC_C_main->n_timeout);
 
 	prev = *VSC_C_main;
 	bzero(VSC_C_1s, sizeof(*VSC_C_1s));

@@ -24,6 +24,7 @@
 # SUCH DAMAGE.
 
 SRCS=	\
+	humanize_number.c \
 	varnishperf.c \
 	vas.c \
 	vct.c \
