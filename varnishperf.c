@@ -1363,12 +1363,13 @@ static void
 SCH_hdr(void)
 {
 
+	/* XXX WG: I'm sure you didn't use your brain. */
 	fprintf(stdout, "[STAT] "
 	    " time    | total    | req   |"
 	    " connect time          |"
 	    " first byte time       |"
 	    " body time             |"
-	    " tx         | tx    | rx         | rx    |\n");
+	    " tx         | tx    | rx         | rx    | errors\n");
 	fprintf(stdout, "[STAT] "
 	    "         |          |       |"
 	    "   min     avg     max |"
@@ -1380,7 +1381,19 @@ SCH_hdr(void)
 	    "-----------------------+"
 	    "-----------------------+"
 	    "-----------------------+"
-	    "------------+-------+------------+-------+\n");
+	    "------------+-------+------------+-------+-------....\n");
+}
+
+static void
+SCH_bottom(void)
+{
+
+	fprintf(stdout, "[STAT] "
+	    "---------+----------+-------+"
+	    "-----------------------+"
+	    "-----------------------+"
+	    "-----------------------+"
+	    "------------+-------+------------+-------+-------....\n");
 }
 
 static void
@@ -1411,12 +1424,12 @@ SCH_stat(void)
 	    (int64_t)(VSC_C_main->n_txbytes - prev.n_txbytes), "",
 	    HN_AUTOSCALE, HN_NOSPACE | HN_DECIMAL);
  	fprintf(stdout, " | %5s", sbuf);
-	fprintf(stdout, " | %10ju", VSC_C_main->n_txbytes - prev.n_txbytes);
+	fprintf(stdout, " | %10ju", VSC_C_main->n_rxbytes - prev.n_rxbytes);
 	humanize_number(sbuf, sizeof(sbuf),
 	    (int64_t)(VSC_C_main->n_rxbytes - prev.n_rxbytes), "",
 	    HN_AUTOSCALE, HN_NOSPACE | HN_DECIMAL);
  	fprintf(stdout, " | %5s", sbuf);
-	fprintf(stdout, " | [%jd]\n", VSC_C_main->n_timeout);
+	fprintf(stdout, " | %jd\n", VSC_C_main->n_timeout);
 
 	prev = *VSC_C_main;
 	bzero(VSC_C_1s, sizeof(*VSC_C_1s));
@@ -1432,6 +1445,7 @@ static void
 SCH_summary(void)
 {
 
+	SCH_bottom();
 /*
 Total: connections 34184 requests 34166 replies 33894 test-duration 1.388 s
 
