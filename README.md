@@ -18,6 +18,8 @@ Architecture
   top.  So multiple threads are supported.  Even more one centralized
   statistics.
 
+* Little bit flexible syntax to define each URL entries.
+
 How to compile
 ==============
 
@@ -48,7 +50,8 @@ URL file syntax
 
 At this moment only one command is supported;
 
-  url
+* url
+  Used to define a URL entry for testing.
 
 url command
 -----------
