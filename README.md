@@ -43,6 +43,33 @@ How to use
   [INFO]    -s file                      # Sets file path containing src IP
 </pre>
 
+URL file syntax
+===============
+
+At this moment only one command is supported;
+
+  url
+
+url command
+^^^^^^^^^^^
+
+As arguments, four essential arguments are supported.  This argument should be
+first always before extend arguments.
+
+* -connect "host"
+
+* -proto "string"
+
+* -req "string"
+
+* -url "urlpath"
+
+Extend arguments are as follows:
+
+* -body "string"
+
+* -bodylen <number>
+
 Examples
 ========
 
@@ -63,7 +90,7 @@ eth0:0    Link encap:Ethernet  HWaddr 00:15:17:D2:EB:0A
           UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
           Memory:fafe0000-fb000000 
 [root@localhost varnish-perf]# cat urls 
-http://172.18.14.1:8080/1b
+url -connect "172.18.14.1:8080" -url "/1b" -hdr "Connection: close"
 [root@localhost varnish-perf]# cat srcips 
 172.18.14.2
 172.18.14.3
