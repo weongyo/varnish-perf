@@ -1,8 +1,9 @@
 Varnish-perf
 ============
 
-Varnish-perf is a simple HTTP performance testing tool to measure the maximum
-performance of target web server or cache server.
+Varnish-perf is a simple HTTP performance (stress) testing tool to
+measure the maximum performance of target web server or cache
+server.
 
 Architecture
 ============
