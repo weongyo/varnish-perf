@@ -28,13 +28,13 @@ It's really simple like abc.
 1. Download thr Varnish-perf from official site.
 2. Untar the file and compile as belows:
 
-    # make depend
-    # make
+    $ make depend
+    $ make
 
 How to use
 ==========
 
-    # ./varnishperf
+    $ ./varnishperf
     [ERROR] No URLs found.
     [INFO] usage: varnishperf [options] urlfile
     [INFO]    -c N                         # Sets number of threads
