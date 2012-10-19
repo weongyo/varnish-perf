@@ -138,8 +138,10 @@ struct url {
 	struct vsb		*vsb;
 	struct vss_addr		**vaddr;
 	int			nvaddr;
-	struct sockaddr_storage sockaddr;
-	int			sockaddrlen;
+
+	char			addr[VTCP_ADDRBUFSIZE];
+	char			port[VTCP_PORTBUFSIZE];
+
 	VTAILQ_ENTRY(url)	list;
 };
 static VTAILQ_HEAD(, url)	url_list = VTAILQ_HEAD_INITIALIZER(url_list);
@@ -337,7 +339,6 @@ VTCP_nonblocking(int sock)
 
 /*--------------------------------------------------------------------*/
 
-#if 0
 static void
 VTCP_name(const struct sockaddr_storage *addr, unsigned l,
     char *abuf, unsigned alen, char *pbuf, unsigned plen)
@@ -363,7 +364,6 @@ VTCP_name(const struct sockaddr_storage *addr, unsigned l,
 		abuf[i] = '\0';
 	}
 }
-#endif
 
 /*--------------------------------------------------------------------*/
 
@@ -505,13 +505,17 @@ static int
 cnt_http_connect(struct sess *sp)
 {
 	struct url *url = sp->url;
+	struct vss_addr *vaddr;
 	int ret;
 
 	if (isnan(sp->t_connstart))
 		sp->t_connstart = TIM_real();
 
-	ret = connect(sp->fd, (struct sockaddr *)&url->sockaddr,
-	    url->sockaddrlen);
+	assert(url->nvaddr > 0);
+	vaddr = url->vaddr[0];		/* XXX always use the first */
+
+	ret = connect(sp->fd, (struct sockaddr *)&vaddr->va_addr,
+	    vaddr->va_addrlen);
 	if (ret == -1) {
 		if (errno != EINPROGRESS) {
 			if (isnan(sp->t_connend))
@@ -2144,6 +2148,7 @@ static void
 cmd_url(CMD_ARGS)
 {
 	struct url *u;
+	struct vss_addr *vaddr;
 	const char *host = "127.0.0.1:80";
 	const char *req = "GET";
 	const char *url = "/";
@@ -2183,6 +2188,10 @@ cmd_url(CMD_ARGS)
 		fprintf(stderr, "[ERROR] failed to resolve %s\n", host);
 		exit(1);
 	}
+	vaddr = u->vaddr[0];
+	AN(vaddr);
+	VTCP_name(&vaddr->va_addr, vaddr->va_addrlen, u->addr, sizeof(u->addr),
+	    u->port, sizeof(u->port));
 
 	VSB_printf(u->vsb, "%s %s %s%s", req, url, proto, nl);
 	for (; *av != NULL; av++) {
