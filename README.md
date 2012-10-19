@@ -115,15 +115,23 @@ Extend arguments are as follows:
 
   If this argument is defined, "string" would be body of HTTP request.
 
+  Please note that if -body or -bodylen option is used, "Content-Length"
+  header will be automatically inserted.
+
 * -bodylen <number>
 
   If this argument is defined, the random-generated string whose length is
   <number> long would be body of HTTP request.
 
+  Please note that if -body or -bodylen option is used, "Content-Length"
+  header will be automatically inserted.
+
 ### url command examples
 
 ```
 url -connect "172.18.14.1:8080" -url "/1b" -hdr "Connection: close"
+url -connect "www.google.com:80" -url "/" -req "POST" \
+    -body "123"
 ```
 
 Examples
