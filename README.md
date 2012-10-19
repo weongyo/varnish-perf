@@ -87,22 +87,22 @@ first always before extend arguments.
 
 * -connect "string"
 
-  * Where this connection would be to.  For example, "string" could be
-    "www.google.com:443", "182.33.44.21" or "14.5.233.9:80"
+  Where this connection would be to.  For example, "string" could be
+  "www.google.com:443", "182.33.44.21" or "14.5.233.9:80"
 
-    If not defined, default value is "127.0.0.1:80".
+  If not defined, default value is "127.0.0.1:80".
 
 * -proto "string"
 
-  * Default value is "HTTP/1.1".
+  Default value is "HTTP/1.1".
 
 * -req "string"
 
-  * Default value is "GET".
+  Default value is "GET".
 
 * -url "string"
 
-  * Default value if "/".
+  Default value if "/".
 
 Extend arguments are as follows:
 
