@@ -106,7 +106,7 @@ first always before extend arguments.
 
 Extend arguments are as follows:
 
-* `-hdr "string"`
+* -hdr "string"
 
   Sets extra HTTP header.  Please note that don't need to put \r\n at
   end of string.  It'll be automatically inserted.
@@ -119,6 +119,12 @@ Extend arguments are as follows:
 
   If this argument is defined, the random-generated string whose length is
   <number> long would be body of HTTP request.
+
+### url command examples
+
+```
+url -connect "172.18.14.1:8080" -url "/1b" -hdr "Connection: close"
+```
 
 Examples
 ========
