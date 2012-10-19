@@ -28,18 +28,22 @@ It's really simple like abc.
 1. Download thr Varnish-perf from official site.
 2. Untar the file and compile as belows:
 
-    $ make depend
-    $ make
+<pre>
+    # make depend
+    # make
+</pre>
 
 How to use
 ==========
 
-    $ ./varnishperf
+<pre>
+    # ./varnishperf
     [ERROR] No URLs found.
     [INFO] usage: varnishperf [options] urlfile
     [INFO]    -c N                         # Sets number of threads
     [INFO]    -r N                         # Sets rate
     [INFO]    -s file                      # Sets file path containing src IP
+</pre>
 
 URL file syntax
 ===============
@@ -48,7 +52,7 @@ At this moment only one command is supported;
 
 * url
 
-  * Used to define a URL entry for testing.g
+  * Used to define a URL entry for testing.
 
 url command
 -----------
@@ -56,18 +60,35 @@ url command
 As arguments, four essential arguments are supported.  This argument should be
 first always before extend arguments.
 
-* -connect "host"
+* -connect "string"
+
+  * Where this connection would be to.  For example, "string" could be
+    "www.google.com:443", "182.33.44.21" or "14.5.233.9:80"
+
+    If not defined, default value is "127.0.0.1:80".
+
 * -proto "string"
+
+  * Default value is "HTTP/1.1".
 
 * -req "string"
 
-* -url "urlpath"
+  * Default value is "GET".
+
+* -url "string"
+
+  * Default value if "/".
 
 Extend arguments are as follows:
 
 * -body "string"
 
+  * If this argument is defined, "string" would be body of HTTP request.
+
 * -bodylen <number>
+
+  * If this argument is defined, the random-generated string whose length is
+    <number> long would be body of HTTP request.
 
 Examples
 ========
