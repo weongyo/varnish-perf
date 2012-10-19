@@ -23,9 +23,7 @@ Architecture
 How to compile
 ==============
 
-It's really simple like abc.
-
-1. Download thr Varnish-perf from official site.
+1. Download thr Varnish-perf from official site (Github).
 2. Untar the file and compile as belows:
 
 <pre>
@@ -52,26 +50,34 @@ Each options indicate:
   * How many thread will handle the request queue.  This request queue is a
     serialized HTTP request queue built.
 
+    If -c option isn't set, default value is 1.
+
 * -r N
 
   * Indicates the rate.  For example, if -r 1000, there will be 1000 requests
     per a second.
+
+    If -r option isn't set, Default value is 1.
 
 * -s file
 
   * Sometimes the stress server could have multiple IP addresses.  If multiple
     src IPs are defined, it'll be selected in round-robin manner.
 
+    If -s option isn't set, OS'll select its source IP of packets
+    automatically.
+
 URL file syntax
 ===============
 
-*If multiple URLs are defined, it'll be ran in round-robin manner.*
+Please note that if multiple URLs are defined, it'll be ran in round-robin
+manner.
 
 At this moment only one command is supported;
 
 * url
 
-  * Used to define a URL entry for testing.
+  Used to define a URL entry for testing.
 
 url command
 -----------
