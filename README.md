@@ -140,6 +140,7 @@ url -connect "172.18.14.1:8080" -url "/1b" -hdr "Connection: close"
 url -connect "www.google.com:80" -url "/" -req "POST" \
     -body "ABCD"
 url -connect "www.google.com:80" -url "/" -req "POST" -proto "HTTP/1.0" \
+    -hdr "Host: www.google.com" \
     -hdr "User-Agent: varnishperf (trunk)" \
     -bodylen 5
 ```
