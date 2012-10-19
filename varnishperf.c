@@ -272,6 +272,12 @@ static struct wq		wq;
  */
 static int	c_arg = 1;
 /*
+ * Limits the TCP-established connections.  If this value is 0, it means it's
+ * unlimited.  If it's not 0, total number of connections will be limited to
+ * this value.
+ */
+static int	m_arg = 0;
+/*
  * Sets rate.  This option will pointing how many requests will be scheduled
  * per a second.
  */
@@ -480,6 +486,11 @@ cnt_http_start(struct sess *sp)
 		sp->step = STP_DONE;
 		return (0);
 	}
+	Lck_Lock(&ses_stat_mtx);
+	VSC_C_main->n_conntotal++;
+	VSC_C_main->n_conn++;
+	Lck_Unlock(&ses_stat_mtx);
+
 	ret = VTCP_nonblocking(sp->fd);
 	if (ret != 0) {
 		fprintf(stderr, "VTCP_nonblocking() error.\n");
@@ -687,7 +698,7 @@ http_probe_splitheader(struct sess *sp)
  */
 
 static int
-htc_header_complete(char *b, char *e)
+http_header_complete(char *b, char *e)
 {
 	const char *p;
 
@@ -756,7 +767,7 @@ retry:
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
-	i = htc_header_complete(sp->resp, sp->resp + sp->roffset);
+	i = http_header_complete(sp->resp, sp->resp + sp->roffset);
 	if (i == 0)
 		goto retry;
 	sp->resp[i] = '\0';
@@ -863,6 +874,10 @@ static int
 cnt_http_done(struct sess *sp)
 {
 	int i;
+
+	Lck_Lock(&ses_stat_mtx);
+	VSC_C_main->n_conn--;
+	Lck_Unlock(&ses_stat_mtx);
 
 	assert(sp->fd >= 0);
 	i = close(sp->fd);
@@ -1351,19 +1366,19 @@ SCH_hdr(void)
 
 	/* XXX WG: I'm sure you didn't use your brain. */
 	fprintf(stdout, "[STAT] "
-	    " time    | total    | req   |"
+	    " time    | total    | req   | conn  |"
 	    " connect time          |"
 	    " first byte time       |"
 	    " body time             |"
 	    " tx         | tx    | rx         | rx    | errors\n");
 	fprintf(stdout, "[STAT] "
-	    "         |          |       |"
+	    "         |          |       |       |"
 	    "   min     avg     max |"
 	    "   min     avg     max |"
 	    "   min     avg     max |"
 	    "            |       |            |       |\n");
 	fprintf(stdout, "[STAT] "
-	    "---------+----------+-------+"
+	    "---------+----------+-------+-------+"
 	    "-----------------------+"
 	    "-----------------------+"
 	    "-----------------------+"
@@ -1376,7 +1391,7 @@ SCH_bottom(void)
 
 	/* XXX WG: I'm sure you didn't use your brain. */
 	fprintf(stdout, "[STAT] "
-	    "---------+----------+-------+"
+	    "---------+----------+-------+-------+"
 	    "-----------------------+"
 	    "-----------------------+"
 	    "-----------------------+"
@@ -1400,6 +1415,7 @@ SCH_stat(void)
 	fprintf(stdout, "[STAT] %s", buf);
 	fprintf(stdout, " | %8jd", VSC_C_main->n_req);
 	fprintf(stdout, " | %5jd", VSC_C_main->n_req - prev.n_req);
+	fprintf(stdout, " | %5jd", VSC_C_main->n_conntotal - prev.n_conntotal);
 
 	if (VSC_C_1s->t_connmin == 1000.0)
 		fprintf(stdout, " |   n/a");
@@ -2308,6 +2324,7 @@ usage(void)
 	fprintf(stderr, "[INFO] usage: varnishperf [options] urlfile\n");
 #define FMT "[INFO]    %-28s # %s\n"
 	fprintf(stderr, FMT, "-c N", "Sets number of threads");
+	fprintf(stderr, FMT, "-m N", "Limits concurrent TCP connections");
 	fprintf(stderr, FMT, "-r N", "Sets rate");
 	fprintf(stderr, FMT, "-s file", "Sets file path containing src IP");
 	exit(1);
@@ -2327,6 +2344,14 @@ main(int argc, char *argv[])
 			c_arg = strtoul(optarg, &end, 10);
 			if (errno == ERANGE || end == optarg || *end) {
 				fprintf(stderr, "illegal number for -c\n");
+				exit(1);
+			}
+			break;
+		case 'm':
+			errno = 0;
+			m_arg = strtoul(optarg, &end, 10);
+			if (errno == ERANGE || end == optarg || *end) {
+				fprintf(stderr, "illegal number for -m\n");
 				exit(1);
 			}
 			break;

@@ -26,10 +26,12 @@
 
 PERFSTAT_u64(n_sess,		'g', "N session active", "sessions")
 PERFSTAT_u64(n_timeout,		'c', "N session timed out", "sessions")
+PERFSTAT_u64(n_conn,		'g', "N connection active", "conns")
 PERFSTAT_u64(n_hitlimit,	'c', "How many hit the rate limit", "times")
 PERFSTAT_u64(n_req,		'c', "N requests", "reqs")
 PERFSTAT_u64(n_httpok,		'c', "Successful HTTP request", "reqs")
 PERFSTAT_u64(n_httperror,	'c', "Failed HTTP request", "reqs")
+PERFSTAT_u64(n_conntotal,	'c', "Total TCP connected", "conns")
 PERFSTAT_u64(n_rxbytes,		'c', "Total bytes varnishperf got", "bytes")
 PERFSTAT_u64(n_txbytes,		'c', "Total bytes varnishperf send", "bytes")
 PERFSTAT_dbl(t_conntotal,	'c', "Total time used for connect(2)",
