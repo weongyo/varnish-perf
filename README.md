@@ -39,6 +39,7 @@ How to use
     [ERROR] No URLs found.
     [INFO] usage: varnishperf [options] urlfile
     [INFO]    -c N                         # Sets number of threads
+    [INFO]    -m N                         # Limits concurrent TCP connections
     [INFO]    -r N                         # Sets rate
     [INFO]    -s file                      # Sets file path containing src IP
 </pre>
@@ -47,25 +48,31 @@ Each options indicate:
 
 * -c N
 
-  * How many thread will handle the request queue.  This request queue is a
-    serialized HTTP request queue built.
+  How many thread will handle the request queue.  This request queue is a
+  serialized HTTP request queue built.
 
-    If -c option isn't set, default value is 1.
+  If -c option isn't set, default value is 1.
+
+* -m N
+
+  Sets the maximum number of TCP connections which connected to the backend.
+
+  Default value is 0 indicating unlimited.
 
 * -r N
 
-  * Indicates the rate.  For example, if -r 1000, there will be 1000 requests
-    per a second.
+  Indicates the rate.  For example, if -r 1000, there will be 1000 requests
+  per a second.
 
-    If -r option isn't set, Default value is 1.
+  If -r option isn't set, Default value is 1.
 
 * -s file
 
-  * Sometimes the stress server could have multiple IP addresses.  If multiple
-    src IPs are defined, it'll be selected in round-robin manner.
+  Sometimes the stress server could have multiple IP addresses.  If multiple
+  src IPs are defined, it'll be selected in round-robin manner.
 
-    If -s option isn't set, OS'll select its source IP of packets
-    automatically.
+  If -s option isn't set, OS'll select its source IP of packets
+  automatically.
 
 URL file syntax
 ===============
@@ -161,32 +168,43 @@ url -connect "172.18.14.1:8080" -url "/1b" -hdr "Connection: close"
 [root@localhost varnish-perf]# cat srcips 
 172.18.14.2
 172.18.14.3
-[root@localhost varnish-perf]# ./varnishperf -s srcips -c 1 -r 30000 ./urls
-[INFO] Reading srcips SRCIP file.
-[INFO] Total 2 SRCIP are loaded from srcips file.
+[root@localhost varnish-perf]# ./varnishperf -s srcips -c 1 -m 300 -r 30000 ./urls
+[INFO] Reading "srcips" SRCIP file.
+[INFO] Total 2 SRCIP are loaded from "srcips" file.
 [INFO] Reading ./urls URL file.
 [INFO] Total 1 URLs are loaded from ./urls file.
-[STAT]  time    | total    | req   | connect time          | first byte time       | body time             | tx         | tx    | rx         | rx    | errors
-[STAT]          |          |       |   min     avg     max |   min     avg     max |   min     avg     max |            |       |            |       |
-[STAT] ---------+----------+-------+-----------------------+-----------------------+-----------------------+------------+-------+------------+-------+-------....
-[STAT] 00:00:01 |     2192 |  2192 | 0.000 / 0.000 / 0.001 | 0.000 / 0.000 / 0.001 | 0.000 / 0.000 / 0.001 |     356644 |  348K |     709150 |  692K | 0
-[STAT] 00:00:02 |    23451 | 21259 | 0.000 / 0.000 / 0.001 | 0.000 / 0.000 / 0.002 | 0.000 / 0.000 / 0.000 |    3465217 |  3,3M |    6909825 |  6,6M | 0
-[STAT] 00:00:03 |    46830 | 23378 | 0.000 / 0.000 / 0.001 | 0.000 / 0.000 / 0.002 | 0.000 / 0.000 / 0.000 |    3810777 |  3,6M |    7598175 |  7,3M | 0
-[STAT] 00:00:04 |    71542 | 24711 | 0.000 / 0.000 / 0.001 | 0.000 / 0.000 / 0.001 | 0.000 / 0.000 / 0.000 |    4027567 |  3,9M |    8048359 |  7,7M | 0
-[STAT] 00:00:05 |    97164 | 25621 | 0.000 / 0.000 / 0.001 | 0.000 / 0.000 / 0.004 | 0.000 / 0.000 / 0.000 |    4176386 |    4M |    8354076 |    8M | 0
-[STAT] ---------+----------+-------+-----------------------+-----------------------+-----------------------+------------+-------+------------+-------+-------....
+[STAT]  time    | total    | req   | conn  | connect time          | first byte time       | body time             | tx         | tx    | rx         | rx    | errors
+[STAT]          |          |       |       |   min     avg     max |   min     avg     max |   min     avg     max |            |       |            |       |
+[STAT] ---------+----------+-------+-------+-----------------------+-----------------------+-----------------------+------------+-------+------------+-------+-------....
+[STAT] 00:00:01 |     1479 |  1479 |    12 | 0.000 / 0.000 / 0.001 | 0.000 / 0.000 / 0.003 | 0.000 / 0.000 / 0.001 |      57408 |   56K |     476764 |  465K | 0
+[STAT] 00:00:02 |    22893 | 21414 |     9 | 0.000 / 0.000 / 0.001 | 0.000 / 0.000 / 0.003 | 0.000 / 0.000 / 0.001 |     835263 |  815K |    6960525 |  6,7M | 0
+[STAT] 00:00:03 |    44647 | 21753 |     6 | 0.000 / 0.000 / 0.001 | 0.000 / 0.000 / 0.002 | 0.000 / 0.000 / 0.000 |     848367 |  828K |    7070050 |  6,8M | 0
+[STAT] 00:00:04 |    67307 | 22659 |     6 | 0.000 / 0.000 / 0.001 | 0.000 / 0.000 / 0.005 | 0.000 / 0.000 / 0.003 |     883740 |  863K |    7364500 |  7,0M | 0
+[STAT] 00:00:05 |    96227 | 28917 |    23 | 0.000 / 0.000 / 0.001 | 0.000 / 0.001 / 0.203 | 0.000 / 0.000 / 0.005 |    1127100 |  1,1M |    9392825 |    9M | 0
+[STAT] 00:00:06 |   126460 | 30232 |    46 | 0.000 / 0.000 / 0.001 | 0.000 / 0.001 / 0.201 | 0.000 / 0.000 / 0.000 |    1178190 |  1,1M |    9818575 |  9,4M | 0
+[STAT] 00:00:07 |   156436 | 29972 |    85 | 0.000 / 0.000 / 0.001 | 0.000 / 0.001 / 0.203 | 0.000 / 0.000 / 0.002 |    1167504 |  1,1M |    9729200 |  9,3M | 0
+[STAT] 00:00:08 |   186504 | 30065 |    71 | 0.000 / 0.002 / 3.000 | 0.000 / 0.001 / 0.201 | 0.000 / 0.000 / 0.001 |    1172340 |  1,1M |    9769825 |  9,3M | 19
+[STAT] 00:00:09 |   216516 | 30011 |    84 | 0.000 / 0.002 / 3.000 | 0.000 / 0.001 / 0.202 | 0.000 / 0.000 / 0.001 |    1169298 |  1,1M |    9743500 |  9,3M | 40
+[STAT] 00:00:10 |   246505 | 29988 |   111 | 0.000 / 0.004 / 3.000 | 0.000 / 0.002 / 0.204 | 0.000 / 0.000 / 0.000 |    1166919 |  1,1M |    9724325 |  9,3M | 79
+[STAT] 00:00:11 |   276545 | 30040 |   111 | 0.000 / 0.001 / 2.997 | 0.000 / 0.001 / 0.201 | 0.000 / 0.000 / 0.000 |    1171248 |  1,1M |    9784436 |  9,3M | 85
+[STAT] 00:00:12 |   305990 | 29441 |    97 | 0.000 / 0.003 / 2.998 | 0.000 / 0.001 / 0.202 | 0.000 / 0.000 / 0.001 |    1147692 |  1,1M |    9592876 |  9,2M | 115
+[STAT] 00:00:13 |   335966 | 29971 |   144 | 0.000 / 0.007 / 3.000 | 0.000 / 0.001 / 0.202 | 0.000 / 0.000 / 0.001 |    1165749 |  1,1M |    9739250 |  9,3M | 167
+[STAT] 00:00:14 |   366168 | 30201 |   164 | 0.000 / 0.001 / 3.000 | 0.000 / 0.002 / 0.204 | 0.000 / 0.000 / 0.000 |    1176201 |  1,1M |    9837376 |  9,4M | 174
+[STAT] ---------+----------+-------+-------+-----------------------+-----------------------+-----------------------+------------+-------+------------+-------+-------....
 [STAT] Summary:
-[STAT]    20490      sessions   # N session active
-[STAT]    0          sessions   # N session timed out
-[STAT]    4          times      # How many hit the rate limit
-[STAT]    106675     reqs       # N requests
-[STAT]    106665     reqs       # Successful HTTP request
-[STAT]    0          reqs       # Failed HTTP request
-[STAT]    34722450   bytes      # Total bytes varnishperf got
-[STAT]    17387862   bytes      # Total bytes varnishperf send
-[STAT]    13.476183  seconds    # Total time used for connect(2)
-[STAT]    31.302394  seconds    # Total time used for waiting the first byte after sending HTTP request
-[STAT]    1.489381   seconds    # Total time used for receiving the body
+[STAT]    21471                sessions   g # N session active
+[STAT]    174                  sessions   c # N session timed out
+[STAT]    181                  conns      g # N connection active
+[STAT]    6                    times      c # How many hit the rate limit
+[STAT]    374533               reqs       c # N requests
+[STAT]    374178               reqs       c # Successful HTTP request
+[STAT]    174                  reqs       c # Failed HTTP request
+[STAT]    374533               conns      c # Total TCP connected
+[STAT]    121730682            bytes      c # Total bytes varnishperf got
+[STAT]    14593956             bytes      c # Total bytes varnishperf send
+[STAT]    606.957768           seconds    c # Total time used for connect(2)
+[STAT]    367.215323           seconds    c # Total time used for waiting the first byte after sending HTTP request
+[STAT]    5.044619             seconds    c # Total time used for receiving the body
 </pre>
 
 License
