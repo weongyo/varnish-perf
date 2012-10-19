@@ -45,6 +45,23 @@ How to use
     [INFO]    -s file                      # Sets file path containing src IP
 </pre>
 
+Each options indicate:
+
+* -c N
+
+  * How many thread will handle the request queue.  This request queue is a
+    serialized HTTP request queue built.
+
+* -r N
+
+  * Indicates the rate.  For example, if -r 1000, there will be 1000 requests
+    per a second.
+
+* -s file
+
+  * Sometimes the stress server could have multiple IP addresses.  If multiple
+    src IPs are defined, it'll be selected in round-robin manner.
+
 URL file syntax
 ===============
 
