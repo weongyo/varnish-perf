@@ -106,7 +106,7 @@ first always before extend arguments.
 
 Extend arguments are as follows:
 
-* -hdr "string"
+* `-hdr "string"`
 
   Sets extra HTTP header.  Please note that don't need to put \r\n at
   end of string.  It'll be automatically inserted.
