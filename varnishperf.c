@@ -33,10 +33,12 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <math.h>
 #include <netdb.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -109,23 +111,40 @@ static struct perfstat		*VSC_C_main = &_perfstat;
 
 /*--------------------------------------------------------------------*/
 
+struct cmds;
+
+#define CMD_ARGS \
+    char * const *av, void *priv, const struct cmds *cmd
+
+typedef void cmd_f(CMD_ARGS);
+
+struct cmds {
+	const char	*name;
+	cmd_f		*cmd;
+};
+
+struct vss_addr {
+	int			 va_family;
+	int			 va_socktype;
+	int			 va_protocol;
+	socklen_t		 va_addrlen;
+	struct sockaddr_storage	 va_addr;
+};
+
 struct url {
 	unsigned		magic;
 #define	URL_MAGIC		0x3178c2cb
-	char			*url_str;
-	char			*hostname;
-	char			*path;
-	unsigned short		portnum;
+
+	struct vsb		*vsb;
+	struct vss_addr		**vaddr;
+	int			nvaddr;
 	struct sockaddr_storage sockaddr;
 	int			sockaddrlen;
-
-	/* formatted ascii target address */
-	char			addr[VTCP_ADDRBUFSIZE];
-	char			port[VTCP_PORTBUFSIZE];
+	VTAILQ_ENTRY(url)	list;
 };
-static struct url		*urls;
+static VTAILQ_HEAD(, url)	url_list = VTAILQ_HEAD_INITIALIZER(url_list);
+static struct url		**urls;
 static int			num_urls;
-static int			max_urls;
 
 struct srcip {
 	char			*ip;
@@ -167,7 +186,6 @@ struct sess {
 
 	struct callout		co;
 
-	struct vsb		*vsb;
 	ssize_t			roffset;
 	ssize_t			woffset;
 #define	MAXHDRSIZ		(4 * 1024)
@@ -264,6 +282,7 @@ static double	boottime;
  * Default value is 0 but 1 if SIGINT is delivered.
  */
 static int	stop;
+static int	verbose;
 
 static void	EVT_Add(struct worker *wrk, int want, int fd, void *arg);
 static void	EVT_Del(struct worker *wrk, int fd);
@@ -318,6 +337,7 @@ VTCP_nonblocking(int sock)
 
 /*--------------------------------------------------------------------*/
 
+#if 0
 static void
 VTCP_name(const struct sockaddr_storage *addr, unsigned l,
     char *abuf, unsigned alen, char *pbuf, unsigned plen)
@@ -343,6 +363,7 @@ VTCP_name(const struct sockaddr_storage *addr, unsigned l,
 		abuf[i] = '\0';
 	}
 }
+#endif
 
 /*--------------------------------------------------------------------*/
 
@@ -430,7 +451,7 @@ cnt_start(struct sess *sp)
 	VSC_C_main->n_req++;
 
 	callout_init(&sp->co, 0);
-	sp->url = &urls[cnt++ % num_urls];
+	sp->url = urls[cnt++ % num_urls];
 	sp->t_start = TIM_real();
 	sp->t_connstart = NAN;
 	sp->t_connend = NAN;
@@ -476,8 +497,6 @@ cnt_http_start(struct sess *sp)
 			return (0);
 		}
 	}
-	sp->vsb = VSB_new_auto();
-	AN(sp->vsb);
 	sp->step = STP_HTTP_CONNECT;
 	return (0);
 }
@@ -510,30 +529,6 @@ cnt_http_connect(struct sess *sp)
 	}
 	if (isnan(sp->t_connend))
 		sp->t_connend = TIM_real();
-	sp->step = STP_HTTP_BUILDREQ;
-	return (0);
-}
-
-static const char * const nl = "\r\n";
-
-static int
-cnt_http_buildreq(struct sess *sp)
-{
-	struct url *url = sp->url;
-	const char *req = "GET";
-	const char *proto = "HTTP/1.1";
-	const char *hostname = "localhost";
-
-	VSB_clear(sp->vsb);
-	VSB_printf(sp->vsb, "%s %s %s%s", req, url->path, proto, nl);
-	VSB_printf(sp->vsb, "Accept-Encoding: gzip, deflate%s", nl);
-	VSB_printf(sp->vsb, "Host: %s%s", hostname, nl);
-	VSB_printf(sp->vsb, "Connection: close%s", nl);
-	VSB_printf(sp->vsb, "User-Agent: Mozilla/4.0"
-	    " (compatible; MSIE 6.0; Windows NT 5.1; AryakaMon)%s", nl);
-	VSB_cat(sp->vsb, nl);
-	AZ(VSB_finish(sp->vsb));
-
 	sp->step = STP_HTTP_TXREQ;
 	return (0);
 }
@@ -547,21 +542,20 @@ cnt_http_txreq(struct sess *sp)
 	if (isnan(sp->t_fbstart))
 		sp->t_fbstart = TIM_real();
 
-	assert(VSB_len(sp->vsb) - sp->woffset > 0);
-	l = write(sp->fd, VSB_data(sp->vsb) + sp->woffset,
-	    VSB_len(sp->vsb) - sp->woffset);
+	assert(VSB_len(url->vsb) - sp->woffset > 0);
+	l = write(sp->fd, VSB_data(url->vsb) + sp->woffset,
+	    VSB_len(url->vsb) - sp->woffset);
 	if (l <= 0) {
 		if (l == -1 && errno == EAGAIN)
 			goto wantwrite;
 		fprintf(stderr,
-		    "write(2) error to %s:%s: %d %s\n",
-		    url->addr, url->port, errno, strerror(errno));
+		    "write(2) error: %d %s\n", errno, strerror(errno));
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
 	sp->woffset += l;
 	VSC_C_main->n_txbytes += l;
-	if (sp->woffset != VSB_len(sp->vsb)) {
+	if (sp->woffset != VSB_len(url->vsb)) {
 wantwrite:
 		callout_reset(&sp->wrk->cb, &sp->co,
 		    CALLOUT_SECTOTICKS(params->write_timeout), cnt_timeout_tick,
@@ -870,10 +864,6 @@ cnt_http_done(struct sess *sp)
 	i = close(sp->fd);
 	assert(i == 0 || errno != EBADF); /* XXX EINVAL seen */
 	sp->fd = -1;
-	if (sp->vsb != NULL) {
-		VSB_delete(sp->vsb);
-		sp->vsb = NULL;
-	}
 	sp->step = STP_DONE;
 	return (0);
 }
@@ -1576,7 +1566,7 @@ SIP_readfile(const char* file)
 		exit(1);
 	}
 
-	fprintf(stdout, "[INFO] Reading %s SRCIP file.\n", file);
+	fprintf(stdout, "[INFO] Reading \"%s\" SRCIP file.\n", file);
 
 	max_srcips = 100;
 	srcips = (struct srcip *)malloc(max_srcips * sizeof(struct srcip));
@@ -1609,102 +1599,660 @@ SIP_readfile(const char* file)
 		++num_srcips;
 	}
 
-	fprintf(stdout, "[INFO] Total %d SRCIP are loaded from %s file.\n",
+	fprintf(stdout, "[INFO] Total %d SRCIP are loaded from \"%s\" file.\n",
 	    num_srcips, file);
 }
 
-static void
-URL_resolv(int n)
-{
-	struct hostent *he;
-	struct sockaddr_in *sin4;
-	struct url *url;
+/**********************************************************************
+ * Read a file into memory
+ */
 
-	url = urls + n;
-	bzero(&url->sockaddr, sizeof(url->sockaddr));
-	url->sockaddrlen = sizeof(*sin4);
-	/* XXX IPv6 */
-	he = gethostbyname(url->hostname);
-	if (he == NULL) {
-		(void)fprintf(stderr, "unknown host - %s\n", url->hostname);
+#define	MAX_FILESIZE	(1024 * 1024)
+
+static char *
+read_file(const char *fn)
+{
+	char *buf;
+	ssize_t sz = MAX_FILESIZE;
+	ssize_t s;
+	int fd;
+
+	fd = open(fn, O_RDONLY);
+	if (fd < 0)
+		return (NULL);
+	buf = malloc(sz);
+	assert(buf != NULL);
+	s = read(fd, buf, sz - 1);
+	if (s <= 0) {
+		free(buf);
+		return (NULL);
+	}
+	AZ(close (fd));
+	assert(s < sz);		/* XXX: increase MAX_FILESIZE */
+	buf[s] = '\0';
+	buf = realloc(buf, s + 1);
+	assert(buf != NULL);
+	return (buf);
+}
+
+static int
+VAV_BackSlash(const char *s, char *res)
+{
+	int r;
+	char c;
+	unsigned u;
+
+	assert(*s == '\\');
+	r = c = 0;
+	switch(s[1]) {
+	case 'n':
+		c = '\n';
+		r = 2;
+		break;
+	case 'r':
+		c = '\r';
+		r = 2;
+		break;
+	case 't':
+		c = '\t';
+		r = 2;
+		break;
+	case '"':
+		c = '"';
+		r = 2;
+		break;
+	case '\\':
+		c = '\\';
+		r = 2;
+		break;
+	case '0': case '1': case '2': case '3':
+	case '4': case '5': case '6': case '7':
+		for (r = 1; r < 4; r++) {
+			if (!vct_isdigit(s[r]))
+				break;
+			if (s[r] - '0' > 7)
+				break;
+			c <<= 3;	/*lint !e701 signed left shift */
+			c |= s[r] - '0';
+		}
+		break;
+	case 'x':
+		if (1 == sscanf(s + 1, "x%02x", &u)) {
+			assert(!(u & ~0xff));
+			c = u;	/*lint !e734 loss of precision */
+			r = 4;
+		}
+		break;
+	default:
+		break;
+	}
+	if (res != NULL)
+		*res = c;
+	return (r);
+}
+
+/**********************************************************************
+ * Macro facility
+ */
+
+/* Safe printf into a fixed-size buffer */
+#define bprintf(buf, fmt, ...)						\
+	do {								\
+		assert(snprintf(buf, sizeof buf, fmt, __VA_ARGS__)	\
+		    < sizeof buf);					\
+	} while (0)
+
+/* Safe printf into a fixed-size buffer */
+#define vbprintf(buf, fmt, ap)						\
+	do {								\
+		assert(vsnprintf(buf, sizeof buf, fmt, ap)		\
+		    < sizeof buf);					\
+	} while (0)
+
+
+struct macro {
+	VTAILQ_ENTRY(macro)	list;
+	char			*name;
+	char			*val;
+};
+
+static VTAILQ_HEAD(,macro) macro_list = VTAILQ_HEAD_INITIALIZER(macro_list);
+
+static pthread_mutex_t		macro_mtx;
+
+static void
+init_macro(void)
+{
+	AZ(pthread_mutex_init(&macro_mtx, NULL));
+}
+
+#if 0
+static void
+macro_def(const char *instance, const char *name, const char *fmt, ...)
+{
+	char buf1[256];
+	char buf2[256];
+	struct macro *m;
+	va_list ap;
+
+	AN(fmt);
+
+	if (instance != NULL) {
+		bprintf(buf1, "%s_%s", instance, name);
+		name = buf1;
+	}
+
+	AZ(pthread_mutex_lock(&macro_mtx));
+	VTAILQ_FOREACH(m, &macro_list, list)
+		if (!strcmp(name, m->name))
+			break;
+	if (m == NULL) {
+		m = calloc(sizeof *m, 1);
+		AN(m);
+		REPLACE(m->name, name);
+		VTAILQ_INSERT_TAIL(&macro_list, m, list);
+	}
+	AN(m);
+	va_start(ap, fmt);
+	free(m->val);
+	m->val = NULL;
+	vbprintf(buf2, fmt, ap);
+	va_end(ap);
+	m->val = strdup(buf2);
+	AN(m->val);
+	if (verbose > 0)
+		fprintf(stdout, "[DEBUG] macro def %s=%s\n", name, m->val);
+	AZ(pthread_mutex_unlock(&macro_mtx));
+}
+
+static void
+macro_undef(const char *instance, const char *name)
+{
+	char buf1[256];
+	struct macro *m;
+
+	if (instance != NULL) {
+		bprintf(buf1, "%s_%s", instance, name);
+		name = buf1;
+	}
+
+	AZ(pthread_mutex_lock(&macro_mtx));
+	VTAILQ_FOREACH(m, &macro_list, list)
+		if (!strcmp(name, m->name))
+			break;
+	if (m != NULL) {
+		if (verbose > 0)
+			fprintf(stdout, "[DEBUG] macro undef %s\n", name);
+		VTAILQ_REMOVE(&macro_list, m, list);
+		free(m->name);
+		free(m->val);
+		free(m);
+	}
+	AZ(pthread_mutex_unlock(&macro_mtx));
+}
+#endif
+
+static char *
+macro_get(const char *b, const char *e)
+{
+	struct macro *m;
+	int l;
+	char *retval = NULL;
+
+	l = e - b;
+
+	if (l == 4 && !memcmp(b, "date", l)) {
+		double t = TIM_real();
+		retval = malloc(64);
+		AN(retval);
+		TIM_format(t, retval);
+		return (retval);
+	}
+
+	AZ(pthread_mutex_lock(&macro_mtx));
+	VTAILQ_FOREACH(m, &macro_list, list)
+		if (!memcmp(b, m->name, l) && m->name[l] == '\0')
+			break;
+	if (m != NULL)
+		retval = strdup(m->val);
+	AZ(pthread_mutex_unlock(&macro_mtx));
+	return (retval);
+}
+
+static struct vsb *
+macro_expand(const char *text)
+{
+	struct vsb *vsb;
+	const char *p, *q;
+	char *m;
+
+	vsb = VSB_new_auto();
+	AN(vsb);
+	while (*text != '\0') {
+		p = strstr(text, "${");
+		if (p == NULL) {
+			VSB_cat(vsb, text);
+			break;
+		}
+		VSB_bcat(vsb, text, p - text);
+		q = strchr(p, '}');
+		if (q == NULL) {
+			VSB_cat(vsb, text);
+			break;
+		}
+		assert(p[0] == '$');
+		assert(p[1] == '{');
+		assert(q[0] == '}');
+		p += 2;
+		m = macro_get(p, q);
+		if (m == NULL) {
+			VSB_delete(vsb);
+			fprintf(stdout, "[ERROR] Macro ${%s} not found\n", p);
+			return (NULL);
+		}
+		VSB_printf(vsb, "%s", m);
+		text = q + 1;
+	}
+	AZ(VSB_finish(vsb));
+	return (vsb);
+}
+
+/**********************************************************************
+ * Execute a file
+ */
+
+#define	MAX_TOKENS		200
+
+static void
+parse_string(char *buf, const struct cmds *cmd, void *priv)
+{
+	char *token_s[MAX_TOKENS], *token_e[MAX_TOKENS];
+	struct vsb *token_exp[MAX_TOKENS];
+	char *p, *q, *f;
+	int nest_brace;
+	int tn;
+	const struct cmds *cp;
+
+	assert(buf != NULL);
+	for (p = buf; *p != '\0'; p++) {
+		/* Start of line */
+		if (vct_issp(*p))
+			continue;
+		if (*p == '#') {
+			for (; *p != '\0' && *p != '\n'; p++)
+				;
+			if (*p == '\0')
+				break;
+			continue;
+		}
+
+		/* First content on line, collect tokens */
+		tn = 0;
+		f = p;
+		while (*p != '\0') {
+			assert(tn < MAX_TOKENS);
+			if (*p == '\n') { /* End on NL */
+				break;
+			}
+			if (vct_issp(*p)) { /* Inter-token whitespace */
+				p++;
+				continue;
+			}
+			if (*p == '\\' && p[1] == '\n') { /* line-cont */
+				p += 2;
+				continue;
+			}
+			if (*p == '"') { /* quotes */
+				token_s[tn] = ++p;
+				q = p;
+				for (; *p != '\0'; p++) {
+					if (*p == '"')
+						break;
+					if (*p == '\\') {
+						p += VAV_BackSlash(p, q) - 1;
+						q++;
+					} else {
+						if (*p == '\n')
+							fprintf(stdout,
+				"[ERROR] Unterminated quoted string in line: %*.*s",
+				(int)(p - f), (int)(p - f), f);
+						assert(*p != '\n');
+						*q++ = *p;
+					}
+				}
+				token_e[tn++] = q;
+				p++;
+			} else if (*p == '{') { /* Braces */
+				nest_brace = 0;
+				token_s[tn] = p + 1;
+				for (; *p != '\0'; p++) {
+					if (*p == '{')
+						nest_brace++;
+					else if (*p == '}') {
+						if (--nest_brace == 0)
+							break;
+					}
+				}
+				assert(*p == '}');
+				token_e[tn++] = p++;
+			} else { /* other tokens */
+				token_s[tn] = p;
+				for (; *p != '\0' && !vct_issp(*p); p++)
+					;
+				token_e[tn++] = p;
+			}
+		}
+		assert(tn < MAX_TOKENS);
+		if (tn == 0)
+			continue;
+		token_s[tn] = NULL;
+		for (tn = 0; token_s[tn] != NULL; tn++) {
+			token_exp[tn] = NULL;
+			AN(token_e[tn]);	/*lint !e771 */
+			*token_e[tn] = '\0';	/*lint !e771 */
+			if (NULL == strstr(token_s[tn], "${"))
+				continue;
+			token_exp[tn] = macro_expand(token_s[tn]);
+			token_s[tn] = VSB_data(token_exp[tn]);
+			token_e[tn] = strchr(token_s[tn], '\0');
+		}
+
+		for (cp = cmd; cp->name != NULL; cp++)
+			if (!strcmp(token_s[0], cp->name))
+				break;
+		if (cp->name == NULL) {
+			fprintf(stdout, "[ERROR] Unknown command: \"%s\"\n",
+			    token_s[0]);
+			exit(2);
+		}
+		if (verbose > 0)
+			fprintf(stdout, "[DEBUG] %s", token_s[0]);
+		assert(cp->cmd != NULL);
+		cp->cmd(token_s, priv, cmd);
+	}
+}
+
+/**********************************************************************
+ * Generate a synthetic body
+ */
+
+static char *
+synth_body(const char *len, int rnd)
+{
+	int i, j, k, l;
+	char *b;
+
+
+	AN(len);
+	i = strtoul(len, NULL, 0);
+	assert(i > 0);
+	b = malloc(i + 1L);
+	AN(b);
+	l = k = '!';
+	for (j = 0; j < i; j++) {
+		if ((j % 64) == 63) {
+			b[j] = '\n';
+			k++;
+			if (k == '~')
+				k = '!';
+			l = k;
+		} else if (rnd) {
+			b[j] = (random() % 95) + ' ';
+		} else {
+			b[j] = (char)l;
+			if (++l == '~')
+				l = '!';
+		}
+	}
+	b[i - 1] = '\n';
+	b[i] = '\0';
+	return (b);
+}
+
+/*
+ * Take a string provided by the user and break it up into address and
+ * port parts.  Examples of acceptable input include:
+ *
+ * "localhost" - "localhost:80"
+ * "127.0.0.1" - "127.0.0.1:80"
+ * "0.0.0.0" - "0.0.0.0:80"
+ * "[::1]" - "[::1]:80"
+ * "[::]" - "[::]:80"
+ *
+ * See also RFC5952
+ */
+
+static int
+VSS_parse(const char *str, char **addr, char **port)
+{
+	const char *p;
+
+	*addr = *port = NULL;
+
+	if (str[0] == '[') {
+		/* IPv6 address of the form [::1]:80 */
+		if ((p = strchr(str, ']')) == NULL ||
+		    p == str + 1 ||
+		    (p[1] != '\0' && p[1] != ':'))
+			return (-1);
+		*addr = strdup(str + 1);
+		XXXAN(*addr);
+		(*addr)[p - (str + 1)] = '\0';
+		if (p[1] == ':') {
+			*port = strdup(p + 2);
+			XXXAN(*port);
+		}
+	} else {
+		/* IPv4 address of the form 127.0.0.1:80, or non-numeric */
+		p = strchr(str, ' ');
+		if (p == NULL)
+			p = strchr(str, ':');
+		if (p == NULL) {
+			*addr = strdup(str);
+			XXXAN(*addr);
+		} else {
+			if (p > str) {
+				*addr = strdup(str);
+				XXXAN(*addr);
+				(*addr)[p - str] = '\0';
+			}
+			*port = strdup(p + 1);
+			XXXAN(*port);
+		}
+	}
+	return (0);
+}
+
+/*
+ * For a given host and port, return a list of struct vss_addr, which
+ * contains all the information necessary to open and bind a socket.  One
+ * vss_addr is returned for each distinct address returned by
+ * getaddrinfo().
+ *
+ * The value pointed to by the tap parameter receives a pointer to an
+ * array of pointers to struct vss_addr.  The caller is responsible for
+ * freeing each individual struct vss_addr as well as the array.
+ *
+ * The return value is the number of addresses resoved, or zero.
+ *
+ * If the addr argument contains a port specification, that takes
+ * precedence over the port argument.
+ *
+ * XXX: We need a function to free the allocated addresses.
+ */
+static int
+VSS_resolve(const char *addr, const char *port, struct vss_addr ***vap)
+{
+	struct addrinfo hints, *res0, *res;
+	struct vss_addr **va;
+	int i, ret;
+	long int ptst;
+	char *adp, *hop;
+
+	*vap = NULL;
+	memset(&hints, 0, sizeof hints);
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = AI_PASSIVE;
+
+	ret = VSS_parse(addr, &hop, &adp);
+	if (ret)
+		return (0);
+
+	if (adp == NULL)
+		ret = getaddrinfo(addr, port, &hints, &res0);
+	else {
+		ptst = strtol(adp,NULL,10);
+		if (ptst < 0 || ptst > 65535)
+			return(0);
+		ret = getaddrinfo(hop, adp, &hints, &res0);
+	}
+
+	free(hop);
+	free(adp);
+
+	if (ret != 0)
+		return (0);
+
+	XXXAN(res0);
+	for (res = res0, i = 0; res != NULL; res = res->ai_next, ++i)
+		/* nothing */ ;
+	if (i == 0) {
+		freeaddrinfo(res0);
+		return (0);
+	}
+	va = calloc(i, sizeof *va);
+	XXXAN(va);
+	*vap = va;
+	for (res = res0, i = 0; res != NULL; res = res->ai_next, ++i) {
+		va[i] = calloc(1, sizeof(**va));
+		XXXAN(va[i]);
+		va[i]->va_family = res->ai_family;
+		va[i]->va_socktype = res->ai_socktype;
+		va[i]->va_protocol = res->ai_protocol;
+		va[i]->va_addrlen = res->ai_addrlen;
+		xxxassert(va[i]->va_addrlen <= sizeof va[i]->va_addr);
+		memcpy(&va[i]->va_addr, res->ai_addr, va[i]->va_addrlen);
+	}
+	freeaddrinfo(res0);
+	return (i);
+}
+
+/* XXX: we may want to vary this */
+static const char * const nl = "\r\n";
+
+static void
+cmd_url(CMD_ARGS)
+{
+	struct url *u;
+	const char *host = "127.0.0.1:80";
+	const char *req = "GET";
+	const char *url = "/";
+	const char *proto = "HTTP/1.1";
+	const char *body = NULL;
+
+	(void)cmd;
+	(void)priv;
+	assert(!strcmp(av[0], "url"));
+	av++;
+
+	ALLOC_OBJ(u, URL_MAGIC);
+	AN(u);
+	u->vsb = VSB_new_auto();
+	AN(u->vsb);
+	VTAILQ_INSERT_TAIL(&url_list, u, list);
+	num_urls++;
+
+	for (; *av != NULL; av++) {
+		if (!strcmp(*av, "-url")) {
+			url = av[1];
+			av++;
+		} else if (!strcmp(*av, "-connect")) {
+			host = av[1];
+			av++;
+		} else if (!strcmp(*av, "-proto")) {
+			proto = av[1];
+			av++;
+		} else if (!strcmp(*av, "-req")) {
+			req = av[1];
+			av++;
+		} else
+			break;
+	}
+	u->nvaddr = VSS_resolve(host, NULL, &u->vaddr);
+	if (u->nvaddr == 0) {
+		fprintf(stderr, "[ERROR] failed to resolve %s\n", host);
 		exit(1);
 	}
-	sin4 = (struct sockaddr_in *)&url->sockaddr;
-	sin4->sin_family = he->h_addrtype;
-	(void)memmove(&sin4->sin_addr, he->h_addr, he->h_length);
-	sin4->sin_port = htons(url->portnum);
 
-	VTCP_name(&url->sockaddr, url->sockaddrlen,
-	    url->addr, sizeof url->addr, url->port, sizeof url->port);
+	VSB_printf(u->vsb, "%s %s %s%s", req, url, proto, nl);
+	for (; *av != NULL; av++) {
+		if (!strcmp(*av, "-hdr")) {
+			VSB_printf(u->vsb, "%s%s", av[1], nl);
+			av++;
+		} else
+			break;
+	}
+	for (; *av != NULL; av++) {
+		if (!strcmp(*av, "-body")) {
+			AZ(body);
+			body = av[1];
+			av++;
+		} else if (!strcmp(*av, "-bodylen")) {
+			AZ(body);
+			body = synth_body(av[1], 0);
+			av++;
+		} else
+			break;
+	}
+	if (*av != NULL) {
+		fprintf(stdout, "[ERROR] Unknown http txreq spec: %s\n", *av);
+		exit(2);
+	}
+	if (body != NULL)
+		VSB_printf(u->vsb, "Content-Length: %ju%s",
+		    (uintmax_t)strlen(body), nl);
+	VSB_cat(u->vsb, nl);
+	if (body != NULL) {
+		VSB_cat(u->vsb, body);
+		VSB_cat(u->vsb, nl);
+	}
+	VSB_finish(u->vsb);
 }
+
+static const struct cmds url_cmds[] = {
+	{ "url",		cmd_url },
+	{ NULL,			NULL }
+};
 
 static void
 URL_readfile(const char *file)
 {
-	FILE *fp;
-	const char *http = "http://";
-	char line[5000], hostname[5000];
-	int http_len = strlen(http);
-	int proto_len, host_len;
-	char *cp;
-
-	fp = fopen(file, "r");
-	if (fp == NULL) {
-		perror(file);
-		exit(1);
-	}
+	char *p;
 
 	fprintf(stdout, "[INFO] Reading %s URL file.\n", file);
-
-	max_urls = 100;
-	urls = (struct url *)malloc(max_urls * sizeof(struct url));
-	num_urls = 0;
-	while (fgets(line, sizeof(line), fp) != (char*) 0) {
-		if (line[strlen(line) - 1] == '\n')
-			line[strlen(line) - 1] = '\0';
-		if (num_urls >= max_urls) {
-			max_urls *= 2;
-			urls = (struct url *)realloc((void *)urls,
-			    max_urls * sizeof(struct url));
-		}
-		if (strlen(line) <= 0)
-			continue;
-		urls[num_urls].magic = URL_MAGIC;
-		urls[num_urls].url_str = strdup(line);
-		AN(urls[num_urls].url_str);
-		if (strncmp(http, line, http_len) == 0) {
-			proto_len = http_len;
-		} else {
-			(void)fprintf(stderr, "unknown protocol - %s\n",
-			    line);
-			exit(1);
-		}
-		for (cp = line + proto_len;
-		     *cp != '\0' && *cp != ':' && *cp != '/'; ++cp)
-			;
-		host_len = cp - line;
-		host_len -= proto_len;
-		strncpy(hostname, line + proto_len, host_len);
-		hostname[host_len] = '\0';
-		urls[num_urls].hostname = strdup(hostname);
-		AN(urls[num_urls].hostname);
-		if (*cp == ':') {
-			urls[num_urls].portnum = (unsigned short)atoi(++cp);
-			while (*cp != '\0' && *cp != '/')
-				++cp;
-		} else
-			urls[num_urls].portnum = 80;
-		if (*cp == '\0') 
-			urls[num_urls].path = strdup("/");
-		else
-			urls[num_urls].path = strdup(cp);
-		AN(urls[num_urls].path);
-		URL_resolv(num_urls);
-		++num_urls;
+	p = read_file(file);
+	if (p == NULL) {
+		fprintf(stderr, "Cannot stat file \"%s\": %s\n",
+		    file, strerror(errno));
+		exit(2);
 	}
+
+	parse_string(p, url_cmds, NULL);
 
 	fprintf(stdout, "[INFO] Total %d URLs are loaded from %s file.\n",
 	    num_urls, file);
+}
+
+static void
+URL_postjob(void)
+{
+	struct url *u;	
+	int i = 0;
+
+	urls = (struct url **)malloc(sizeof(struct url *) * num_urls);
+	AN(urls);
+	VTAILQ_FOREACH(u, &url_list, list)
+		urls[i++] = u;
 }
 
 static void
@@ -1758,12 +2306,14 @@ main(int argc, char *argv[])
 	(void)signal(SIGINT, PEF_sigint);
 	(void)signal(SIGPIPE, SIG_IGN);
 
+	init_macro();
 	LCK_Init();
 
 	if (s_arg != NULL)
 		SIP_readfile(s_arg);
 	for (;argc > 0; argc--, argv++)
 		URL_readfile(*argv);
+	URL_postjob();
 	if (num_urls == 0) {
 		fprintf(stderr, "[ERROR] No URLs found.\n");
 		usage();
