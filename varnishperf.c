@@ -207,6 +207,9 @@ struct sess {
 	struct sessmem		*mem;
 	VTAILQ_ENTRY(sess)	poollist;
 };
+static VTAILQ_HEAD(, sess)	waiting_list =
+    VTAILQ_HEAD_INITIALIZER(waiting_list);
+static struct lock		waiting_mtx;
 
 /*--------------------------------------------------------------------*/
 
@@ -251,6 +254,7 @@ VTAILQ_HEAD(workerhead, worker);
 
 #define	WQ_LOCK(wq)		Lck_Lock(&(wq)->mtx)
 #define	WQ_UNLOCK(wq)		Lck_Unlock(&(wq)->mtx)
+#define	WQ_LOCKASSERTHELD(wq)	Lck_AssertHeld(&(wq)->mtx)
 
 struct wq {
 	unsigned		magic;
@@ -296,7 +300,9 @@ static void	EVT_Add(struct worker *wrk, int want, int fd, void *arg);
 static void	EVT_Del(struct worker *wrk, int fd);
 static void	SES_Acct(struct sess *sp);
 static void	SES_Delete(struct sess *sp);
+static void	SES_Rush(void);
 static int	SES_Schedule(struct sess *sp);
+static void	SES_Sleep(struct sess *sp);
 static void	SES_Wait(struct sess *sp, int want);
 static double	TIM_real(void);
 
@@ -487,6 +493,11 @@ cnt_http_start(struct sess *sp)
 		return (0);
 	}
 	Lck_Lock(&ses_stat_mtx);
+	if (m_arg != 0 && VSC_C_main->n_conn >= m_arg) {
+		Lck_Unlock(&ses_stat_mtx);
+		SES_Sleep(sp);
+		return (1);
+	}
 	VSC_C_main->n_conntotal++;
 	VSC_C_main->n_conn++;
 	Lck_Unlock(&ses_stat_mtx);
@@ -877,6 +888,8 @@ cnt_http_done(struct sess *sp)
 
 	Lck_Lock(&ses_stat_mtx);
 	VSC_C_main->n_conn--;
+	if (m_arg != 0)
+		SES_Rush();
 	Lck_Unlock(&ses_stat_mtx);
 
 	assert(sp->fd >= 0);
@@ -971,6 +984,8 @@ CNT_Session(struct sess *sp)
 static void
 WRK_QueueInsert(struct wq *qp, struct sess *sp, int athead)
 {
+
+	WQ_LOCKASSERTHELD(qp);
 
 	if (athead)
 		VTAILQ_INSERT_HEAD(&qp->queue, sp, poollist);
@@ -1350,6 +1365,34 @@ SES_Schedule(struct sess *sp)
 	return (0);
 }
 
+static void
+SES_Rush(void)
+{
+	struct sess *sp;
+
+	Lck_Lock(&waiting_mtx);
+	sp = VTAILQ_FIRST(&waiting_list);
+	if (sp != NULL) {
+		VTAILQ_REMOVE(&waiting_list, sp, poollist);
+		Lck_Unlock(&waiting_mtx);
+		WQ_LOCK(&wq);
+		WRK_QueueInsert(&wq, sp, 1);
+		WQ_UNLOCK(&wq);
+		return;
+	}
+	Lck_Unlock(&waiting_mtx);
+}
+
+static void
+SES_Sleep(struct sess *sp)
+{
+
+	sp->wrk = NULL;
+	Lck_Lock(&waiting_mtx);
+	VTAILQ_INSERT_TAIL(&waiting_list, sp, poollist);
+	Lck_Unlock(&waiting_mtx);
+}
+
 /*--------------------------------------------------------------------*/
 
 struct sched {
@@ -1586,6 +1629,7 @@ PEF_Init(void)
 {
 
 	boottime = TIM_real();
+	Lck_New(&waiting_mtx, "waiting list lock");
 	Lck_New(&ses_mem_mtx, "Session Memory");
 	Lck_New(&ses_stat_mtx, "Session Statistics");
 }
@@ -2338,7 +2382,7 @@ main(int argc, char *argv[])
 	char *end;
 	const char *s_arg = NULL;
 
-	while ((ch = getopt(argc, argv, "c:r:s:")) != -1) {
+	while ((ch = getopt(argc, argv, "c:m:r:s:")) != -1) {
 		switch (ch) {
 		case 'c':
 			errno = 0;
