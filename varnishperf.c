@@ -1564,12 +1564,12 @@ Errors: closednoresp 0 sslerror 0 sslerror_syscall 0 other 0
 */
 
 	fprintf(stdout, "[STAT] Summary:\n");
-#define FMT_u64 "[STAT]    %-10ju %-10s # %s\n"
-#define FMT_dbl "[STAT]    %-10f %-10s # %s\n"
+#define FMT_u64 "[STAT]    %-20ju %-10s %c # %s\n"
+#define FMT_dbl "[STAT]    %-20f %-10s %c # %s\n"
 #define	PERFSTAT_u64(a, b, c, d)	\
-	fprintf(stdout, FMT_u64, VSC_C_main->a, d, c);
+	fprintf(stdout, FMT_u64, VSC_C_main->a, d, b, c);
 #define	PERFSTAT_dbl(a, b, c, d)	\
-	fprintf(stdout, FMT_dbl, VSC_C_main->a, d, c);
+	fprintf(stdout, FMT_dbl, VSC_C_main->a, d, b, c);
 #include "stats.h"
 #undef PERFSTAT
 #undef FMT_dbl
