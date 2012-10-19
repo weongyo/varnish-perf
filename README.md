@@ -28,22 +28,18 @@ It's really simple like abc.
 1. Download thr Varnish-perf from official site.
 2. Untar the file and compile as belows:
 
-  <pre>
     # make depend
     # make
-  </pre>
 
 How to use
 ==========
 
-<pre>
-  # ./varnishperf
-  [ERROR] No URLs found.
-  [INFO] usage: varnishperf [options] urlfile
-  [INFO]    -c N                         # Sets number of threads
-  [INFO]    -r N                         # Sets rate
-  [INFO]    -s file                      # Sets file path containing src IP
-</pre>
+    # ./varnishperf
+    [ERROR] No URLs found.
+    [INFO] usage: varnishperf [options] urlfile
+    [INFO]    -c N                         # Sets number of threads
+    [INFO]    -r N                         # Sets rate
+    [INFO]    -s file                      # Sets file path containing src IP
 
 URL file syntax
 ===============
@@ -52,7 +48,7 @@ At this moment only one command is supported;
 
 * url
 
-  Used to define a URL entry for testing.g
+  * Used to define a URL entry for testing.g
 
 url command
 -----------
@@ -61,7 +57,6 @@ As arguments, four essential arguments are supported.  This argument should be
 first always before extend arguments.
 
 * -connect "host"
-
 * -proto "string"
 
 * -req "string"
