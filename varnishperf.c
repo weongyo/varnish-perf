@@ -1472,18 +1472,6 @@ SCH_summary(void)
 
 	SCH_bottom();
 
-	fprintf(stdout, "[STAT] Summary:\n");
-#define FMT_u64 "[STAT]    %-10ju %-10s # %s\n"
-#define FMT_dbl "[STAT]    %-10f %-10s # %s\n"
-#define	PERFSTAT_u64(a, b, c, d)	\
-	fprintf(stdout, FMT_u64, VSC_C_main->a, d, c);
-#define	PERFSTAT_dbl(a, b, c, d)	\
-	fprintf(stdout, FMT_dbl, VSC_C_main->a, d, c);
-#include "stats.h"
-#undef PERFSTAT
-#undef FMT_dbl
-#undef FMT_u64
-
 /*
 Total: connections 34184 requests 34166 replies 33894 test-duration 1.388 s
 
@@ -1508,6 +1496,18 @@ Errors: total 0 client-timo 0 socket-timo 0 connrefused 0 connreset 0
 Errors: fd-unavail 0 addrunavail 0 ftab-full 0 drop 0 incompleted 0
 Errors: closednoresp 0 sslerror 0 sslerror_syscall 0 other 0
 */
+
+	fprintf(stdout, "[STAT] Summary:\n");
+#define FMT_u64 "[STAT]    %-10ju %-10s # %s\n"
+#define FMT_dbl "[STAT]    %-10f %-10s # %s\n"
+#define	PERFSTAT_u64(a, b, c, d)	\
+	fprintf(stdout, FMT_u64, VSC_C_main->a, d, c);
+#define	PERFSTAT_dbl(a, b, c, d)	\
+	fprintf(stdout, FMT_dbl, VSC_C_main->a, d, c);
+#include "stats.h"
+#undef PERFSTAT
+#undef FMT_dbl
+#undef FMT_u64
 }
 
 static void
