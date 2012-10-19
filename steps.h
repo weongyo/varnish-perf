@@ -31,6 +31,7 @@
 STEP(first,		FIRST)
 STEP(start,		START)
 STEP(http_start,	HTTP_START)
+STEP(http_wait,		HTTP_WAIT)
 STEP(http_connect,	HTTP_CONNECT)
 STEP(http_txreq,	HTTP_TXREQ)
 STEP(http_rxresp,	HTTP_RXRESP)

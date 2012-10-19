@@ -480,9 +480,6 @@ cnt_start(struct sess *sp)
 static int
 cnt_http_start(struct sess *sp)
 {
-	struct srcip *sip;
-	int ret;
-	static int no = 0;
 
 	/* XXX doesn't care for IPv6 at all */
 	sp->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -492,6 +489,17 @@ cnt_http_start(struct sess *sp)
 		sp->step = STP_DONE;
 		return (0);
 	}
+	sp->step = STP_HTTP_WAIT;
+	return (0);
+}
+
+static int
+cnt_http_wait(struct sess *sp)
+{
+	struct srcip *sip;
+	int ret;
+	static int no = 0;
+
 	Lck_Lock(&ses_stat_mtx);
 	if (m_arg != 0 && VSC_C_main->n_conn >= m_arg) {
 		Lck_Unlock(&ses_stat_mtx);
@@ -501,7 +509,6 @@ cnt_http_start(struct sess *sp)
 	VSC_C_main->n_conntotal++;
 	VSC_C_main->n_conn++;
 	Lck_Unlock(&ses_stat_mtx);
-
 	ret = VTCP_nonblocking(sp->fd);
 	if (ret != 0) {
 		fprintf(stderr, "VTCP_nonblocking() error.\n");
@@ -1458,7 +1465,7 @@ SCH_stat(void)
 	fprintf(stdout, "[STAT] %s", buf);
 	fprintf(stdout, " | %8jd", VSC_C_main->n_req);
 	fprintf(stdout, " | %5jd", VSC_C_main->n_req - prev.n_req);
-	fprintf(stdout, " | %5jd", VSC_C_main->n_conntotal - prev.n_conntotal);
+	fprintf(stdout, " | %5jd", VSC_C_main->n_conn);
 
 	if (VSC_C_1s->t_connmin == 1000.0)
 		fprintf(stdout, " |   n/a");
