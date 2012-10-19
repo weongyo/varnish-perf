@@ -118,10 +118,10 @@ Extend arguments are as follows:
   Please note that if -body or -bodylen option is used, "Content-Length"
   header will be automatically inserted.
 
-* -bodylen <number>
+* -bodylen number
 
   If this argument is defined, the random-generated string whose length is
-  <number> long would be body of HTTP request.
+  number long would be body of HTTP request.
 
   Please note that if -body or -bodylen option is used, "Content-Length"
   header will be automatically inserted.
