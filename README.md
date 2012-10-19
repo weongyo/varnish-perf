@@ -95,7 +95,10 @@ first always before extend arguments.
 * -connect "string"
 
   Where this connection would be to.  For example, "string" could be
-  "www.google.com:443", "182.33.44.21" or "14.5.233.9:80"
+  "www.google.com:443", "182.33.44.21" or "14.5.233.9:80".
+
+  Please note that if you want to set "Host" header of HTTP request,
+  you should use -hdr argument explicitly.
 
   If not defined, default value is "127.0.0.1:80".
 
