@@ -100,6 +100,9 @@ static struct perfstat_1s	_perfstat_1s;
 static struct perfstat_1s	*VSC_C_1s = &_perfstat_1s;
 
 struct perfstat {
+#define	PEFSTAT_STATUS_MAX	1000
+	int			n_status[PEFSTAT_STATUS_MAX];
+	int			n_statusother;
 #define	PERFSTAT_u64(a, b, c, d)	uint64_t a;
 #define	PERFSTAT_dbl(a, b, c, d)	double a;
 #include "stats.h"
@@ -860,6 +863,7 @@ static int
 cnt_http_ok(struct sess *sp)
 {
 	long int http_status;
+	int v;
 	char *endptr = NULL;
 
 	VSC_C_main->n_httpok++;
@@ -873,6 +877,49 @@ cnt_http_ok(struct sess *sp)
 		    (errno != 0 && http_status == 0) ||
 		    (sp->resphdr[1] == endptr))
 			goto skip;
+		if (http_status >= PEFSTAT_STATUS_MAX)
+			VSC_C_main->n_statusother++;
+		else {
+			v = (int)http_status;
+			VSC_C_main->n_status[v]++;
+			/*
+			 * XXX WG: common on weongyo... Use your brain more!
+			 */
+			switch (v / 100) {
+			case 0:
+				VSC_C_main->n_status_0xx++;
+				break;
+			case 1:
+				VSC_C_main->n_status_1xx++;
+				break;
+			case 2:
+				VSC_C_main->n_status_2xx++;
+				break;
+			case 3:
+				VSC_C_main->n_status_3xx++;
+				break;
+			case 4:
+				VSC_C_main->n_status_4xx++;
+				break;
+			case 5:
+				VSC_C_main->n_status_5xx++;
+				break;
+			case 6:
+				VSC_C_main->n_status_6xx++;
+				break;
+			case 7:
+				VSC_C_main->n_status_7xx++;
+				break;
+			case 8:
+				VSC_C_main->n_status_8xx++;
+				break;
+			case 9:
+				VSC_C_main->n_status_9xx++;
+				break;
+			default:
+				WRONG("[CRIT] Unexpected value...");
+			}
+		}
 	}
 skip:
 	sp->step = STP_HTTP_DONE;
@@ -1451,7 +1498,7 @@ SCH_bottom(void)
 static void
 SCH_stat(void)
 {
-	static struct perfstat prev = { 0, };
+	static struct perfstat prev = { { 0, }, };
 	static int first = 1;
 	double now = TIM_real();
 	char buf[TIM_FORMAT_SIZE], sbuf[5];

@@ -42,3 +42,13 @@ PERFSTAT_dbl(t_fbtotal,		'c', "Total time used for waiting"
 				     "seconds")
 PERFSTAT_dbl(t_bodytotal,	'c', "Total time used for receiving the body",
 				     "seconds")
+PERFSTAT_u64(n_status_0xx,	'c', "HTTP response status for 0XX", "times")
+PERFSTAT_u64(n_status_1xx,	'c', "HTTP response status for 1XX", "times")
+PERFSTAT_u64(n_status_2xx,	'c', "HTTP response status for 2XX", "times")
+PERFSTAT_u64(n_status_3xx,	'c', "HTTP response status for 3XX", "times")
+PERFSTAT_u64(n_status_4xx,	'c', "HTTP response status for 4XX", "times")
+PERFSTAT_u64(n_status_5xx,	'c', "HTTP response status for 5XX", "times")
+PERFSTAT_u64(n_status_6xx,	'c', "HTTP response status for 6XX", "times")
+PERFSTAT_u64(n_status_7xx,	'c', "HTTP response status for 7XX", "times")
+PERFSTAT_u64(n_status_8xx,	'c', "HTTP response status for 8XX", "times")
+PERFSTAT_u64(n_status_9xx,	'c', "HTTP response status for 9XX", "times")
