@@ -440,7 +440,7 @@ cnt_first(struct sess *sp)
 
 /*--------------------------------------------------------------------
  * START
- * Handle a request, wherever it came from recv/restart.
+ * Handle a request.
  */
 
 static int
