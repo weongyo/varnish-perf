@@ -1775,12 +1775,13 @@ struct macro {
 
 static VTAILQ_HEAD(,macro) macro_list = VTAILQ_HEAD_INITIALIZER(macro_list);
 
-static pthread_mutex_t		macro_mtx;
+static struct lock		macro_mtx;
 
 static void
 init_macro(void)
 {
-	AZ(pthread_mutex_init(&macro_mtx, NULL));
+
+	Lck_New(&macro_mtx, "macro lock");
 }
 
 #if 0
@@ -1799,7 +1800,7 @@ macro_def(const char *instance, const char *name, const char *fmt, ...)
 		name = buf1;
 	}
 
-	AZ(pthread_mutex_lock(&macro_mtx));
+	Lck_Lock(&macro_mtx);
 	VTAILQ_FOREACH(m, &macro_list, list)
 		if (!strcmp(name, m->name))
 			break;
@@ -1819,7 +1820,7 @@ macro_def(const char *instance, const char *name, const char *fmt, ...)
 	AN(m->val);
 	if (verbose > 0)
 		fprintf(stdout, "[DEBUG] macro def %s=%s\n", name, m->val);
-	AZ(pthread_mutex_unlock(&macro_mtx));
+	Lck_Unlock(&macro_mtx);
 }
 
 static void
@@ -1833,7 +1834,7 @@ macro_undef(const char *instance, const char *name)
 		name = buf1;
 	}
 
-	AZ(pthread_mutex_lock(&macro_mtx));
+	Lck_Lock(&macro_mtx);
 	VTAILQ_FOREACH(m, &macro_list, list)
 		if (!strcmp(name, m->name))
 			break;
@@ -1845,7 +1846,7 @@ macro_undef(const char *instance, const char *name)
 		free(m->val);
 		free(m);
 	}
-	AZ(pthread_mutex_unlock(&macro_mtx));
+	Lck_Unlock(&macro_mtx);
 }
 #endif
 
@@ -1866,13 +1867,13 @@ macro_get(const char *b, const char *e)
 		return (retval);
 	}
 
-	AZ(pthread_mutex_lock(&macro_mtx));
+	Lck_Lock(&macro_mtx);
 	VTAILQ_FOREACH(m, &macro_list, list)
 		if (!memcmp(b, m->name, l) && m->name[l] == '\0')
 			break;
 	if (m != NULL)
 		retval = strdup(m->val);
-	AZ(pthread_mutex_unlock(&macro_mtx));
+	Lck_Unlock(&macro_mtx);
 	return (retval);
 }
 
@@ -2377,8 +2378,8 @@ main(int argc, char *argv[])
 	(void)signal(SIGINT, PEF_sigint);
 	(void)signal(SIGPIPE, SIG_IGN);
 
-	init_macro();
 	LCK_Init();
+	init_macro();
 
 	if (s_arg != NULL)
 		SIP_readfile(s_arg);
