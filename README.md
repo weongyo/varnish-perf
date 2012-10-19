@@ -212,6 +212,11 @@ url -connect "172.18.14.1:8080" -url "/1b" -hdr "Connection: close"
 [STAT]    5.044619             seconds    c # Total time used for receiving the body
 </pre>
 
+Supported OS
+============
+
+* linux
+
 License
 =======
 
