@@ -1585,6 +1585,8 @@ SCH_tick_1s(void *arg)
 
 	CAST_OBJ_NOTNULL(scp, arg, SCHED_MAGIC);
 
+	SCH_stat();
+
 	for (i = 0; i < r_arg; i++) {
 		if (VSC_C_main->n_sess >= r_arg) {
 			VSC_C_main->n_hitlimit++;
@@ -1594,8 +1596,6 @@ SCH_tick_1s(void *arg)
 		AN(sp);
 		AZ(WRK_QueueSession(sp));
 	}
-
-	SCH_stat();
 
 	callout_reset(&scp->cb, &scp->co, CALLOUT_SECTOTICKS(1), SCH_tick_1s,
 	    arg);
