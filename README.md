@@ -131,7 +131,10 @@ Extend arguments are as follows:
 ```
 url -connect "172.18.14.1:8080" -url "/1b" -hdr "Connection: close"
 url -connect "www.google.com:80" -url "/" -req "POST" \
-    -body "123"
+    -body "ABCD"
+url -connect "www.google.com:80" -url "/" -req "POST" -proto "HTTP/1.0" \
+    -hdr "User-Agent: varnishperf (trunk)" \
+    -bodylen 5
 ```
 
 Examples
