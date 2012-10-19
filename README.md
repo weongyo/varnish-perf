@@ -48,6 +48,8 @@ How to use
 URL file syntax
 ===============
 
+*If multiple URLs are defined, it'll be ran in round-robin manner.*
+
 At this moment only one command is supported;
 
 * url
