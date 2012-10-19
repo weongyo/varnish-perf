@@ -51,7 +51,7 @@ At this moment only one command is supported;
   url
 
 url command
-^^^^^^^^^^^
+-----------
 
 As arguments, four essential arguments are supported.  This argument should be
 first always before extend arguments.
