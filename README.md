@@ -51,7 +51,8 @@ URL file syntax
 At this moment only one command is supported;
 
 * url
-  Used to define a URL entry for testing.
+
+  Used to define a URL entry for testing.g
 
 url command
 -----------
