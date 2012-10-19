@@ -108,12 +108,12 @@ Extend arguments are as follows:
 
 * -body "string"
 
-  * If this argument is defined, "string" would be body of HTTP request.
+  If this argument is defined, "string" would be body of HTTP request.
 
 * -bodylen <number>
 
-  * If this argument is defined, the random-generated string whose length is
-    <number> long would be body of HTTP request.
+  If this argument is defined, the random-generated string whose length is
+  <number> long would be body of HTTP request.
 
 Examples
 ========
