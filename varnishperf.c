@@ -1647,7 +1647,57 @@ SCH_stat(void)
 }
 
 static void
-SCH_summary(void)
+SCH_tick_1s(void *arg)
+{
+	struct sched *scp;
+	struct sess *sp;
+	int i;
+
+	CAST_OBJ_NOTNULL(scp, arg, SCHED_MAGIC);
+
+	SCH_stat();
+
+	for (i = 0; i < r_arg; i++) {
+		if (VSC_C_main->n_sess >= r_arg) {
+			VSC_C_main->n_hitlimit++;
+			break;
+		}
+		sp = SES_New();
+		AN(sp);
+		AZ(WRK_QueueSession(sp));
+	}
+
+	callout_reset(&scp->cb, &scp->co, CALLOUT_SECTOTICKS(1), SCH_tick_1s,
+	    arg);
+}
+
+static void *
+SCH_thread(void *arg)
+{
+	struct sched sc, *scp;
+
+	scp = &sc;
+	bzero(scp, sizeof(*scp));
+	scp->magic = SCHED_MAGIC;
+	CAST_OBJ_NOTNULL(scp->qp, arg, WQ_MAGIC);
+	COT_init(&scp->cb);
+	callout_init(&scp->co, 0);
+	callout_reset(&scp->cb, &scp->co, CALLOUT_SECTOTICKS(1),
+	    SCH_tick_1s, &sc);
+	while (!stop) {
+		COT_ticks(&scp->cb);
+		COT_clock(&scp->cb);
+		TIM_sleep(0.1);
+	}
+	callout_stop(&scp->cb, &scp->co);
+	COT_fini(&scp->cb);
+	NEEDLESS_RETURN(NULL);
+}
+
+/*--------------------------------------------------------------------*/
+
+static void
+PEF_summary(void)
 {
 
 	SCH_bottom();
@@ -1697,53 +1747,6 @@ Errors: closednoresp 0 sslerror 0 sslerror_syscall 0 other 0
 }
 
 static void
-SCH_tick_1s(void *arg)
-{
-	struct sched *scp;
-	struct sess *sp;
-	int i;
-
-	CAST_OBJ_NOTNULL(scp, arg, SCHED_MAGIC);
-
-	SCH_stat();
-
-	for (i = 0; i < r_arg; i++) {
-		if (VSC_C_main->n_sess >= r_arg) {
-			VSC_C_main->n_hitlimit++;
-			break;
-		}
-		sp = SES_New();
-		AN(sp);
-		AZ(WRK_QueueSession(sp));
-	}
-
-	callout_reset(&scp->cb, &scp->co, CALLOUT_SECTOTICKS(1), SCH_tick_1s,
-	    arg);
-}
-
-static void *
-SCH_thread(void *arg)
-{
-	struct sched sc, *scp;
-
-	scp = &sc;
-	bzero(scp, sizeof(*scp));
-	scp->magic = SCHED_MAGIC;
-	CAST_OBJ_NOTNULL(scp->qp, arg, WQ_MAGIC);
-	COT_init(&scp->cb);
-	callout_init(&scp->co, 0);
-	callout_reset(&scp->cb, &scp->co, CALLOUT_SECTOTICKS(1),
-	    SCH_tick_1s, &sc);
-	while (!stop) {
-		COT_ticks(&scp->cb);
-		COT_clock(&scp->cb);
-		TIM_sleep(0.1);
-	}
-	SCH_summary();
-	NEEDLESS_RETURN(NULL);
-}
-
-static void
 PEF_sigint(int no)
 {
 
@@ -1777,6 +1780,9 @@ PEF_Run(void)
 		AZ(pthread_create(&tp[i], NULL, WRK_thread, &wq));
 	AZ(pthread_create(&schedtp, NULL, SCH_thread, &wq));
 	AZ(pthread_join(schedtp, NULL));
+	for (i = 0; i < c_arg; i++)
+		AZ(pthread_join(tp[i], NULL));
+	PEF_summary();
 }
 
 /*--------------------------------------------------------------------*/
