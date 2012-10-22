@@ -300,6 +300,11 @@ static struct wq		wq;
 /*--------------------------------------------------------------------*/
 
 /*
+ * Limits the number of total connections.  If c_arg is 0, it points unlimited.
+ */
+static uint32_t	c_arg;
+
+/*
  * Limits the TCP-established connections.  If this value is 0, it means it's
  * unlimited.  If it's not 0, total number of connections will be limited to
  * this value.
@@ -495,8 +500,6 @@ cnt_start(struct sess *sp)
 {
 	static int cnt = 0;
 
-	VSC_C_main->n_req++;
-
 	callout_init(&sp->co, 0);
 	sp->url = urls[cnt++ % num_urls];
 	sp->t_start = TIM_real();
@@ -515,6 +518,8 @@ cnt_start(struct sess *sp)
 static int
 cnt_http_start(struct sess *sp)
 {
+
+	VSC_C_main->n_req++;
 
 	/* XXX doesn't care for IPv6 at all */
 	sp->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -1143,6 +1148,27 @@ WRK_QueueSession(struct sess *sp)
 	return (1);
 }
 
+static void
+WRK_Init(struct worker *w)
+{
+
+	bzero(w, sizeof(*w));
+	w->magic = WORKER_MAGIC;
+	w->fd = epoll_create(1);
+	assert(w->fd >= 0);
+	AZ(pthread_cond_init(&w->cond, NULL));
+	COT_init(&w->cb);
+}
+
+static void
+WRK_Fini(struct worker *w)
+{
+
+	AZ(pthread_cond_destroy(&w->cond));
+	COT_fini(&w->cb);
+	AZ(close(w->fd));
+}
+
 #define	EPOLLEVENT_MAX	(64 * 1024)
 
 static void *
@@ -1162,12 +1188,6 @@ WRK_thread(void *arg)
 	AN(ev);
 
 	w = &wt->w;
-	bzero(w, sizeof(*w));
-	w->magic = WORKER_MAGIC;
-	w->fd = epoll_create(1);
-	assert(w->fd >= 0);
-	COT_init(&w->cb);
-	AZ(pthread_cond_init(&w->cond, NULL));
 	w->owner = pthread_self();
 
 	while (1) {
@@ -1230,9 +1250,6 @@ WRK_thread(void *arg)
 	}
 
 	fprintf(stdout, "[INFO] Finishing the worker thread.\n");
-	AZ(pthread_cond_destroy(&w->cond));
-	COT_fini(&w->cb);
-	AZ(close(w->fd));
 	free(ev);
 	NEEDLESS_RETURN(NULL);
 }
@@ -1680,6 +1697,10 @@ SCH_tick_1s(void *arg)
 			VSC_C_main->n_hitlimit++;
 			break;
 		}
+		if (c_arg != 0 && n_sess_grab >= c_arg) {
+			stop = 1;
+			return;
+		}
 		sp = SES_New();
 		AN(sp);
 		AZ(WRK_QueueSession(sp));
@@ -1700,7 +1721,7 @@ SCH_thread(void *arg)
 	CAST_OBJ_NOTNULL(scp->qp, arg, WQ_MAGIC);
 	COT_init(&scp->cb);
 	callout_init(&scp->co, 0);
-	callout_reset(&scp->cb, &scp->co, CALLOUT_SECTOTICKS(1),
+	callout_reset(&scp->cb, &scp->co, CALLOUT_SECTOTICKS(0),
 	    SCH_tick_1s, &sc);
 	while (!stop) {
 		COT_ticks(&scp->cb);
@@ -1799,13 +1820,17 @@ PEF_Run(void)
 	for (i = 0; i < t_arg; i++) {
 		wt[i].magic = WORKERTHREAD_MAGIC;
 		wt[i].wq = &wq;
+		WRK_Init(&wt[i].w);
 		AZ(pthread_create(&tp[i], NULL, WRK_thread, &wt[i]));
 	}
 	AZ(pthread_create(&schedtp, NULL, SCH_thread, &wq));
+	fprintf(stdout, "[INFO] Joining the scheduler thread\n");
 	AZ(pthread_join(schedtp, NULL));
 	for (i = 0; i < t_arg; i++) {
 		AZ(pthread_cond_signal(&wt[i].w.cond));
+		fprintf(stdout, "[INFO] Joining the worker thread\n");
 		AZ(pthread_join(tp[i], NULL));
+		WRK_Fini(&wt[i].w);
 	}
 	PEF_summary();
 }
@@ -2710,8 +2735,17 @@ main(int argc, char *argv[])
 
 	MCF_ParamInit();
 
-	while ((ch = getopt(argc, argv, "m:p:r:s:t:z")) != -1) {
+	while ((ch = getopt(argc, argv, "c:m:p:r:s:t:z")) != -1) {
 		switch (ch) {
+		case 'c':
+			errno = 0;
+			c_arg = strtoul(optarg, &end, 10);
+			if (errno == ERANGE || end == optarg || *end) {
+				fprintf(stdout,
+				    "[ERROR] illegal number for -c\n");
+				exit(1);
+			}
+			break;
 		case 'm':
 			errno = 0;
 			m_arg = strtoul(optarg, &end, 10);
