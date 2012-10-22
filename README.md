@@ -50,13 +50,6 @@ How to use
 
 Each options indicate:
 
-* -c N
-
-  How many thread will handle the request queue.  This request queue is a
-  serialized HTTP request queue built.
-
-  If -c option isn't set, default value is 1.
-
 * -m N
 
   Sets the maximum number of TCP connections which connected to the backend.
@@ -115,6 +108,13 @@ Each options indicate:
 
   If -s option isn't set, OS'll select its source IP of packets
   automatically.
+
+* -t N
+
+  How many thread will handle the request queue.  This request queue is a
+  serialized HTTP request queue built.
+
+  If -t option isn't set, default value is 1.
 
 * -z
 

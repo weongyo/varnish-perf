@@ -300,11 +300,6 @@ static struct wq		wq;
 /*--------------------------------------------------------------------*/
 
 /*
- * Sets the concurrent number of threads.  Default is 1 indicating one thread
- * would be invoked.
- */
-static int	c_arg = 1;
-/*
  * Limits the TCP-established connections.  If this value is 0, it means it's
  * unlimited.  If it's not 0, total number of connections will be limited to
  * this value.
@@ -315,6 +310,11 @@ static int	m_arg = 0;
  * per a second.
  */
 static int	r_arg = 1;
+/*
+ * Sets the concurrent number of threads.  Default is 1 indicating one thread
+ * would be invoked.
+ */
+static int	t_arg = 1;
 /*
  * Shows all statistic fields.  If stat value is zero, default behaviour is
  * that it'd not be shown.
@@ -1786,8 +1786,8 @@ PEF_Init(void)
 static void
 PEF_Run(void)
 {
-	struct workerthread wt[c_arg];
-	pthread_t tp[c_arg], schedtp;
+	struct workerthread wt[t_arg];
+	pthread_t tp[t_arg], schedtp;
 	int i;
 
 	bzero(&wq, sizeof(wq));
@@ -1796,14 +1796,14 @@ PEF_Run(void)
 	VTAILQ_INIT(&wq.idle);
 	VTAILQ_INIT(&wq.queue);
 
-	for (i = 0; i < c_arg; i++) {
+	for (i = 0; i < t_arg; i++) {
 		wt[i].magic = WORKERTHREAD_MAGIC;
 		wt[i].wq = &wq;
 		AZ(pthread_create(&tp[i], NULL, WRK_thread, &wt[i]));
 	}
 	AZ(pthread_create(&schedtp, NULL, SCH_thread, &wq));
 	AZ(pthread_join(schedtp, NULL));
-	for (i = 0; i < c_arg; i++) {
+	for (i = 0; i < t_arg; i++) {
 		AZ(pthread_cond_signal(&wt[i].w.cond));
 		AZ(pthread_join(tp[i], NULL));
 	}
@@ -2692,11 +2692,11 @@ usage(void)
 
 	fprintf(stdout, "[INFO] usage: varnishperf [options] urlfile\n");
 #define FMT "[INFO]    %-28s # %s\n"
-	fprintf(stdout, FMT, "-c N", "Sets number of threads");
 	fprintf(stdout, FMT, "-m N", "Limits concurrent TCP connections");
 	fprintf(stderr, FMT, "-p param=value", "set parameter");
 	fprintf(stdout, FMT, "-r N", "Sets rate");
 	fprintf(stdout, FMT, "-s file", "Sets file path containing src IP");
+	fprintf(stdout, FMT, "-t N", "Sets number of threads");
 	fprintf(stdout, FMT, "-z", "Shows all statistic fields");
 	exit(1);
 }
@@ -2710,17 +2710,8 @@ main(int argc, char *argv[])
 
 	MCF_ParamInit();
 
-	while ((ch = getopt(argc, argv, "c:m:p:r:s:z")) != -1) {
+	while ((ch = getopt(argc, argv, "m:p:r:s:t:z")) != -1) {
 		switch (ch) {
-		case 'c':
-			errno = 0;
-			c_arg = strtoul(optarg, &end, 10);
-			if (errno == ERANGE || end == optarg || *end) {
-				fprintf(stdout,
-				    "[ERROR] illegal number for -c\n");
-				exit(1);
-			}
-			break;
 		case 'm':
 			errno = 0;
 			m_arg = strtoul(optarg, &end, 10);
@@ -2749,6 +2740,15 @@ main(int argc, char *argv[])
 			break;
 		case 's':
 			s_arg = optarg;
+			break;
+		case 't':
+			errno = 0;
+			t_arg = strtoul(optarg, &end, 10);
+			if (errno == ERANGE || end == optarg || *end) {
+				fprintf(stdout,
+				    "[ERROR] illegal number for -c\n");
+				exit(1);
+			}
 			break;
 		case 'z':
 			z_flag = 1 - z_flag;
