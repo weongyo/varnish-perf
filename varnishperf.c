@@ -199,6 +199,8 @@ struct sess {
 	enum step		step;
 	int			fd;
 
+	int			calls;
+
 #define	STEPHIST_MAX		64
 	enum step		stephist[STEPHIST_MAX];
 	int			nstephist;
@@ -303,7 +305,10 @@ static struct wq		wq;
  * Limits the number of total connections.  If c_arg is 0, it points unlimited.
  */
 static uint32_t	c_arg;
-
+/*
+ * Sets the number of requests per a connection.
+ */
+static int	C_arg = 1;
 /*
  * Limits the TCP-established connections.  If this value is 0, it means it's
  * unlimited.  If it's not 0, total number of connections will be limited to
@@ -644,6 +649,7 @@ wantwrite:
 		SES_Wait(sp, SESS_WANT_WRITE);
 		return (1);
 	}
+	sp->calls++;
 	sp->step = STP_HTTP_RXRESP;
 	return (0);
 }
@@ -2718,6 +2724,7 @@ usage(void)
 	fprintf(stdout, "[INFO] usage: varnishperf [options] urlfile\n");
 #define FMT "[INFO]    %-28s # %s\n"
 	fprintf(stdout, FMT, "-c N", "Limits total TCP connections");
+	fprintf(stdout, FMT, "-C N", "Sets request number per a conn");
 	fprintf(stdout, FMT, "-m N", "Limits concurrent TCP connections");
 	fprintf(stderr, FMT, "-p param=value", "set parameter");
 	fprintf(stdout, FMT, "-r N", "Sets rate");
@@ -2736,7 +2743,7 @@ main(int argc, char *argv[])
 
 	MCF_ParamInit();
 
-	while ((ch = getopt(argc, argv, "c:m:p:r:s:t:z")) != -1) {
+	while ((ch = getopt(argc, argv, "c:C:m:p:r:s:t:z")) != -1) {
 		switch (ch) {
 		case 'c':
 			errno = 0;
@@ -2744,6 +2751,20 @@ main(int argc, char *argv[])
 			if (errno == ERANGE || end == optarg || *end) {
 				fprintf(stdout,
 				    "[ERROR] illegal number for -c\n");
+				exit(1);
+			}
+			break;
+		case 'C':
+			errno = 0;
+			C_arg = strtoul(optarg, &end, 10);
+			if (errno == ERANGE || end == optarg || *end) {
+				fprintf(stdout,
+				    "[ERROR] illegal number for -c\n");
+				exit(1);
+			}
+			if (C_arg <= 0) {
+				fprintf(stdout,
+				    "[ERROR] wrong number for -C: %u\n", C_arg);
 				exit(1);
 			}
 			break;
