@@ -265,6 +265,7 @@ struct sess {
 	ssize_t			roffset;
 	ssize_t			woffset;
 	struct http_conn	htc;
+	char			*clbuf;		/* For chunked-encoding */
 	struct ws		ws[1];
 #define	WSBUFMAX		(8 * 1024)
 	char			_wsbuf[WSBUFMAX];
@@ -447,10 +448,11 @@ WS_Assert(const struct ws *ws)
 {
 
 	CHECK_OBJ_NOTNULL(ws, WS_MAGIC);
-	fprintf(stdout, "WS(%p = (%s, %p %u %u %u)",
-	    ws, ws->id, ws->s, pdiff(ws->s, ws->f),
-	    ws->r == NULL ? 0 : pdiff(ws->f, ws->r),
-	    pdiff(ws->s, ws->e));
+	if (params->diag_bitmap & 0x8)
+		fprintf(stdout, "WS(%p = (%s, %p %u %u %u)",
+		    ws, ws->id, ws->s, pdiff(ws->s, ws->f),
+		    ws->r == NULL ? 0 : pdiff(ws->f, ws->r),
+		    pdiff(ws->s, ws->e));
 	assert(ws->s != NULL);
 	assert(PAOK(ws->s));
 	assert(ws->e != NULL);
@@ -464,6 +466,28 @@ WS_Assert(const struct ws *ws)
 		assert(ws->r <= ws->e);
 		assert(PAOK(ws->r));
 	}
+}
+
+static char *
+WS_Alloc(struct ws *ws, unsigned bytes)
+{
+	char *r;
+
+	WS_Assert(ws);
+	bytes = PRNDUP(bytes);
+
+	assert(ws->r == NULL);
+	if (ws->f + bytes > ws->e) {
+		ws->overflow++;
+		WS_Assert(ws);
+		return(NULL);
+	}
+	r = ws->f;
+	ws->f += bytes;
+	if (params->diag_bitmap & 0x8)
+		fprintf(stdout, "WS_Alloc(%p, %u) = %p", ws, bytes, r);
+	WS_Assert(ws);
+	return (r);
 }
 
 static unsigned
@@ -482,8 +506,9 @@ WS_Reserve(struct ws *ws, unsigned bytes)
 	b2 = PRNDDN(b2);
 	xxxassert(ws->f + b2 <= ws->e);
 	ws->r = ws->f + b2;
-	fprintf(stdout, "WS_Reserve(%p, %u/%u) = %u",
-	    ws, b2, bytes, pdiff(ws->f, ws->r));
+	if (params->diag_bitmap & 0x8)
+		fprintf(stdout, "WS_Reserve(%p, %u/%u) = %u",
+		    ws, b2, bytes, pdiff(ws->f, ws->r));
 	WS_Assert(ws);
 	return (pdiff(ws->f, ws->r));
 }
@@ -491,8 +516,10 @@ WS_Reserve(struct ws *ws, unsigned bytes)
 static void
 WS_ReleaseP(struct ws *ws, char *ptr)
 {
+
 	WS_Assert(ws);
-	fprintf(stdout, "WS_ReleaseP(%p, %p)", ws, ptr);
+	if (params->diag_bitmap & 0x8)
+		fprintf(stdout, "WS_ReleaseP(%p, %p)", ws, ptr);
 	assert(ws->r != NULL);
 	assert(ptr >= ws->f);
 	assert(ptr <= ws->r);
@@ -505,8 +532,9 @@ static void
 WS_Init(struct ws *ws, const char *id, void *space, unsigned len)
 {
 
-	fprintf(stdout,
-	    "[DEBUG] WS_Init(%p, \"%s\", %p, %u)", ws, id, space, len);
+	if (params->diag_bitmap & 0x8)
+		fprintf(stdout,
+		    "WS_Init(%p, \"%s\", %p, %u)", ws, id, space, len);
 	assert(space != NULL);
 	memset(ws, 0, sizeof *ws);
 	ws->magic = WS_MAGIC;
@@ -1187,6 +1215,8 @@ retry:
 	}
 	p = http_find_header(sp->resphdr, "Transfer-Encoding");
 	if (p != NULL && !strcmp(p, "chunked")) {
+		sp->clbuf = WS_Alloc(sp->ws, 32);
+		AN(sp->clbuf);
 		sp->step = STP_HTTP_RXRESP_BODY_CHUNKED;
 		return (0);
 	}
@@ -2347,6 +2377,7 @@ static const struct parspec input_parspec[] = {
 		"  0x00000001 - CNT_Session states.\n"
 		"  0x00000002 - socket error messages.\n"
 		"  0x00000004 - thread mgt.\n"
+		"  0x00000008 - workspace.\n"
 		"Use 0x notation and do the bitor in your head :-)\n",
 		"0", "bitmap" },
 	{ "read_timeout", tweak_timeout,
