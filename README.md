@@ -62,16 +62,16 @@ Each options indicate:
 
 * -p param=value
 
-  Sets the parameters used to control varnishperf's behaviours.  Folleing
+  Sets the parameters used to control varnishperf's behaviours.  Following
   parameters are supported:
 
   * connect_timeout=N
 
-    * Default connection timeout for backend connections.
-      We only try to connect to the backend for this many
-      seconds before giving up. 
+    Default connection timeout for backend connections.
+    We only try to connect to the backend for this many
+    seconds before giving up. 
 
-      Default value is 3 seconds.
+    Default value is 3 seconds.
 
   * diag_bitmap=N
 
