@@ -1029,8 +1029,8 @@ retry:
 		SES_errno(0);
 		if (params->diag_bitmap & 0x2)
 			fprintf(stdout,
-			    "[ERROR] %s: read(2) error: unexpected EOF"
-			    " (offset %zd)\n", __func__, sp->roffset);
+			    "[ERROR] %s: read(2) error: unexpected EOF\n",
+			    __func__);
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	default:
