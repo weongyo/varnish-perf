@@ -63,7 +63,7 @@ Each options indicate:
 * -p param=value
 
   Sets the parameters used to control varnishperf's behaviours.  Following
-  parameters are supported:
+  parameters are supported.
 
   * connect_timeout=N
 
