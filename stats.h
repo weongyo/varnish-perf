@@ -24,7 +24,7 @@
  * SUCH DAMAGE.
  */
 
-PERFSTAT_u64(n_sess,		'g', "N session active", "sessions")
+PERFSTAT_u64(n_sess,		'g', "N session current active", "sessions")
 PERFSTAT_u64(n_timeout,		'c', "N session timed out", "sessions")
 PERFSTAT_u64(n_conn,		'g', "N connection active", "conns")
 PERFSTAT_u64(n_hitlimit,	'c', "How many hit the rate limit", "times")
