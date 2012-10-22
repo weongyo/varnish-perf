@@ -35,12 +35,17 @@ How to use
 ==========
 
     # ./varnishperf
+    [INFO] Set Default for connect_timeout = 3
+    [INFO] Set Default for diag_bitmap = 0
+    [INFO] Set Default for read_timeout = 6
+    [INFO] Set Default for write_timeout = 6
     [ERROR] No URLs found.
     [INFO] usage: varnishperf [options] urlfile
     [INFO]    -c N                         # Sets number of threads
     [INFO]    -m N                         # Limits concurrent TCP connections
     [INFO]    -r N                         # Sets rate
     [INFO]    -s file                      # Sets file path containing src IP
+    [INFO]    -z                           # Shows all statistic fields
 
 Each options indicate:
 
