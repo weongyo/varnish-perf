@@ -67,11 +67,11 @@ Each options indicate:
 
   * connect_timeout=N
 
-    Default connection timeout for backend connections.
-    We only try to connect to the backend for this many
-    seconds before giving up. 
+    * Default connection timeout for backend connections.
+      We only try to connect to the backend for this many
+      seconds before giving up. 
 
-    Default value is 3 seconds.
+      Default value is 3 seconds.
 
   * diag_bitmap=N
 
