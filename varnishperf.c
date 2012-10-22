@@ -80,7 +80,10 @@ static struct params		_params = {
 };
 static struct params		*params = &_params;
 
-/*--------------------------------------------------------------------*/
+/*--------------------------------------------------------------------
+ * XXX some variables are protected by ses_stat_mtx but others are
+ * not.
+ */
 
 struct perfstat_1s {
 	uint32_t		n_conn;
