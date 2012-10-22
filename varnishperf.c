@@ -13,7 +13,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -495,7 +495,7 @@ cnt_http_start(struct sess *sp)
 	/* XXX doesn't care for IPv6 at all */
 	sp->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (sp->fd == -1) {
-		fprintf(stderr, "socket(2) error: %d %s\n", errno,
+		fprintf(stdout, "[ERROR] socket(2) error: %d %s\n", errno,
 		    strerror(errno));
 		sp->step = STP_DONE;
 		return (0);
@@ -522,7 +522,7 @@ cnt_http_wait(struct sess *sp)
 	Lck_Unlock(&ses_stat_mtx);
 	ret = VTCP_nonblocking(sp->fd);
 	if (ret != 0) {
-		fprintf(stderr, "VTCP_nonblocking() error.\n");
+		fprintf(stdout, "[ERROR] VTCP_nonblocking() error.\n");
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
@@ -531,7 +531,8 @@ cnt_http_wait(struct sess *sp)
 		sip = &srcips[no++ % num_srcips];
 		if (bind(sp->fd, (struct sockaddr *)&sip->sockaddr,
 		    sip->sockaddrlen)) {
-			fprintf(stderr, "bind(2) with %s error: %d %s\n",
+			fprintf(stdout,
+			    "[ERROR] bind(2) with %s error: %d %s\n",
 			    sip->ip, errno, strerror(errno));
 			sp->step = STP_HTTP_ERROR;
 			return (0);
@@ -560,7 +561,8 @@ cnt_http_connect(struct sess *sp)
 		if (errno != EINPROGRESS) {
 			if (isnan(sp->t_connend))
 				sp->t_connend = TIM_real();
-			fprintf(stderr, "connect(2) error: %d %s\n", errno,
+			fprintf(stdout,
+			    "[ERROR] connect(2) error: %d %s\n", errno,
 			    strerror(errno));
 			sp->step = STP_HTTP_ERROR;
 			return (0);
@@ -592,7 +594,7 @@ cnt_http_txreq(struct sess *sp)
 	if (l <= 0) {
 		if (l == -1 && errno == EAGAIN)
 			goto wantwrite;
-		fprintf(stderr,
+		fprintf(stdout,
 		    "write(2) error: %d %s\n", errno, strerror(errno));
 		sp->step = STP_HTTP_ERROR;
 		return (0);
@@ -661,7 +663,7 @@ http_probe_splitheader(struct sess *sp)
 	while (!vct_islws(*p))
 		p++;
 	if (vct_iscrlf(*p)) {
-		fprintf(stderr, "too early CRLF after PROTO\n");
+		fprintf(stdout, "[ERROR] too early CRLF after PROTO\n");
 		return (-1);
 	}
 	*p++ = '\0';
@@ -670,7 +672,7 @@ http_probe_splitheader(struct sess *sp)
 	while (vct_issp(*p))		/* XXX: H space only */
 		p++;
 	if (vct_iscrlf(*p)) {
-		fprintf(stderr, "too early CRLF after STATUS\n");
+		fprintf(stdout, "[ERROR] too early CRLF after STATUS\n");
 		return (-1);
 	}
 	hh[n++] = p;
@@ -694,13 +696,13 @@ http_probe_splitheader(struct sess *sp)
 		*q = '\0';
 	}
 	if (n != 3) {
-		fprintf(stderr, "wrong status header\n");
+		fprintf(stdout, "[ERROR] wrong status header\n");
 		return (-1);
 	}
 
 	while (*p != '\0') {
 		if (n >= MAXHDR) {
-			fprintf(stderr, "too long headers\n");
+			fprintf(stdout, "[ERROR] too long headers\n");
 			return (-1);
 		}
 		if (vct_iscrlf(*p))
@@ -775,13 +777,13 @@ retry:
 		if (isnan(sp->t_fbend))
 			sp->t_fbend = TIM_real();
 		if (l == 0) {
-			fprintf(stderr,
+			fprintf(stdout,
 			    "[ERROR] %s: read(2) error: unexpected EOF"
 			    " (offset %zd)\n", __func__, sp->roffset);
 			sp->step = STP_HTTP_ERROR;
 			return (0);
 		}
-		fprintf(stderr, "[ERROR] %s: read(2) error: %d %s\n", __func__,
+		fprintf(stdout, "[ERROR] %s: read(2) error: %d %s\n", __func__,
 		    errno, strerror(errno));
 		sp->step = STP_HTTP_ERROR;
 		return (0);
@@ -792,7 +794,7 @@ retry:
 	sp->roffset += l;
 	sp->resp[sp->roffset] = '\0';
 	if (sp->roffset >= sizeof(sp->resp)) {
-		fprintf(stderr, "too big header response\n");
+		fprintf(stdout, "[ERROR] too big header response\n");
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
@@ -802,7 +804,7 @@ retry:
 	sp->resp[i] = '\0';
 	r = http_probe_splitheader(sp);
 	if (r == -1) {
-		fprintf(stderr, "corrupted response header\n");
+		fprintf(stdout, "[ERROR] corrupted response header\n");
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
@@ -841,7 +843,7 @@ cnt_http_rxresp_body(struct sess *sp)
 		}
 		if (isnan(sp->t_bodyend))
 			sp->t_bodyend = TIM_real();
-		fprintf(stderr, "read(2) error: %d %s\n", errno,
+		fprintf(stdout, "[ERROR] read(2) error: %d %s\n", errno,
 		    strerror(errno));
 		sp->step = STP_HTTP_ERROR;
 		return (0);
@@ -856,7 +858,7 @@ cnt_http_rxresp_body(struct sess *sp)
 	if (p != NULL) {
 		l = (ssize_t)strtoul(p, NULL, 0);
 		if (l != sp->roffset) {
-			fprintf(stderr,
+			fprintf(stdout,
 			    "Content-Length isn't matched:"
 			    " %jd / %jd\n", l, sp->roffset);
 			sp->step = STP_HTTP_ERROR;
@@ -1759,7 +1761,7 @@ SIP_readfile(const char* file)
 		    sizeof(srcips[num_srcips].sockaddr));
 		sin4 = (struct sockaddr_in *)&srcips[num_srcips].sockaddr;
 		if (!inet_aton(srcips[num_srcips].ip, &sin4->sin_addr)) {
-			(void)fprintf(stderr,
+			(void)fprintf(stdout,
 			    "[ERROR] cannot convert source IP address %s\n",
 			    srcips[num_srcips].ip);
 			exit(1);
@@ -2084,7 +2086,8 @@ parse_string(char *buf, const struct cmds *cmd, void *priv)
 					} else {
 						if (*p == '\n')
 							fprintf(stdout,
-				"[ERROR] Unterminated quoted string in line: %*.*s",
+				"[ERROR] Unterminated quoted string"
+				" in line: %*.*s",
 				(int)(p - f), (int)(p - f), f);
 						assert(*p != '\n');
 						*q++ = *p;
@@ -2351,7 +2354,7 @@ cmd_url(CMD_ARGS)
 	}
 	u->nvaddr = VSS_resolve(host, NULL, &u->vaddr);
 	if (u->nvaddr == 0) {
-		fprintf(stderr, "[ERROR] failed to resolve %s\n", host);
+		fprintf(stdout, "[ERROR] failed to resolve %s\n", host);
 		exit(1);
 	}
 	vaddr = u->vaddr[0];
@@ -2407,7 +2410,7 @@ URL_readfile(const char *file)
 	fprintf(stdout, "[INFO] Reading %s URL file.\n", file);
 	p = read_file(file);
 	if (p == NULL) {
-		fprintf(stderr, "Cannot stat file \"%s\": %s\n",
+		fprintf(stdout, "[ERROR] Cannot stat file \"%s\": %s\n",
 		    file, strerror(errno));
 		exit(2);
 	}
@@ -2434,13 +2437,13 @@ static void
 usage(void)
 {
 
-	fprintf(stderr, "[INFO] usage: varnishperf [options] urlfile\n");
+	fprintf(stdout, "[INFO] usage: varnishperf [options] urlfile\n");
 #define FMT "[INFO]    %-28s # %s\n"
-	fprintf(stderr, FMT, "-c N", "Sets number of threads");
-	fprintf(stderr, FMT, "-m N", "Limits concurrent TCP connections");
-	fprintf(stderr, FMT, "-r N", "Sets rate");
-	fprintf(stderr, FMT, "-s file", "Sets file path containing src IP");
-	fprintf(stderr, FMT, "-z", "Shows all statistic fields");
+	fprintf(stdout, FMT, "-c N", "Sets number of threads");
+	fprintf(stdout, FMT, "-m N", "Limits concurrent TCP connections");
+	fprintf(stdout, FMT, "-r N", "Sets rate");
+	fprintf(stdout, FMT, "-s file", "Sets file path containing src IP");
+	fprintf(stdout, FMT, "-z", "Shows all statistic fields");
 	exit(1);
 }
 
@@ -2457,7 +2460,8 @@ main(int argc, char *argv[])
 			errno = 0;
 			c_arg = strtoul(optarg, &end, 10);
 			if (errno == ERANGE || end == optarg || *end) {
-				fprintf(stderr, "illegal number for -c\n");
+				fprintf(stdout,
+				    "[ERROR] illegal number for -c\n");
 				exit(1);
 			}
 			break;
@@ -2465,7 +2469,8 @@ main(int argc, char *argv[])
 			errno = 0;
 			m_arg = strtoul(optarg, &end, 10);
 			if (errno == ERANGE || end == optarg || *end) {
-				fprintf(stderr, "illegal number for -m\n");
+				fprintf(stdout,
+				    "[ERROR] illegal number for -m\n");
 				exit(1);
 			}
 			break;
@@ -2473,7 +2478,8 @@ main(int argc, char *argv[])
 			errno = 0;
 			r_arg = strtoul(optarg, &end, 10);
 			if (errno == ERANGE || end == optarg || *end) {
-				fprintf(stderr, "illegal number for -r\n");
+				fprintf(stdout,
+				    "[ERROR] illegal number for -r\n");
 				exit(1);
 			}
 			break;
@@ -2500,7 +2506,7 @@ main(int argc, char *argv[])
 		URL_readfile(*argv);
 	URL_postjob();
 	if (num_urls == 0) {
-		fprintf(stderr, "[ERROR] No URLs found.\n");
+		fprintf(stdout, "[ERROR] No URLs found.\n");
 		usage();
 	}
 	PEF_Init();
