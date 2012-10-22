@@ -60,7 +60,27 @@
 #define TIM_FORMAT_SIZE		30
 #define NEEDLESS_RETURN(foo)	return (foo)
 
+struct parspec;
 struct worker;
+
+/*--------------------------------------------------------------------*/
+
+typedef void tweak_t(const struct parspec *, const char *arg);
+
+struct parspec {
+	const char	*name;
+	tweak_t		*func;
+	volatile void	*priv;
+	double		min;
+	double		max;
+	const char	*descr;
+	const char	*def;
+	const char	*units;
+};
+
+static int nparspec;
+static struct parspec const ** parspec;
+static int margin;
 
 /*--------------------------------------------------------------------*/
 
@@ -69,21 +89,11 @@ struct params {
 	unsigned		connect_timeout;
 	unsigned		read_timeout;
 	unsigned		write_timeout;
-	/*
-	 * Bitmap controlling diagnostics code:
-	 *
-	 *   0x00000001 - CNT_Session states.
-	 *   0x00000002 - socket error messages.
-	 */
+
 	unsigned		diag_bitmap;
 };
-static struct params		_params = {
-	.connect_timeout	= 3,
-	.read_timeout		= 6,
-	.write_timeout		= 6,
-	.diag_bitmap		= 0x0
-};
-static struct params		*params = &_params;
+static struct params		master;
+static struct params		*params;
 
 /*--------------------------------------------------------------------
  * XXX some variables are protected by ses_stat_mtx but others are
@@ -1764,6 +1774,171 @@ PEF_Run(void)
 
 /*--------------------------------------------------------------------*/
 
+static const struct parspec *
+mcf_findpar(const char *name)
+{
+	int i;
+
+	for (i = 0; i < nparspec; i++)
+		if (!strcmp(parspec[i]->name, name))
+			return (parspec[i]);
+	return (NULL);
+}
+
+/*--------------------------------------------------------------------
+ * Add a group of parameters to the global set and sort by name.
+ */
+
+static int
+parspec_cmp(const void *a, const void *b)
+{
+	struct parspec * const * pa = a;
+	struct parspec * const * pb = b;
+	return (strcmp((*pa)->name, (*pb)->name));
+}
+
+static void
+MCF_AddParams(const struct parspec *ps)
+{
+	const struct parspec *pp;
+	int n;
+
+	n = 0;
+	for (pp = ps; pp->name != NULL; pp++) {
+		if (mcf_findpar(pp->name) != NULL)
+			fprintf(stderr, "Duplicate param: %s\n", pp->name);
+		if (strlen(pp->name) + 1 > margin)
+			margin = strlen(pp->name) + 1;
+		n++;
+	}
+	parspec = realloc(parspec, (1L + nparspec + n) * sizeof *parspec);
+	XXXAN(parspec);
+	for (pp = ps; pp->name != NULL; pp++)
+		parspec[nparspec++] = pp;
+	parspec[nparspec] = NULL;
+	qsort (parspec, nparspec, sizeof parspec[0], parspec_cmp);
+}
+
+/*--------------------------------------------------------------------
+ * Set defaults for all parameters
+ */
+
+static void
+MCF_SetDefaults(void)
+{
+	const struct parspec *pp;
+	int i;
+
+	for (i = 0; i < nparspec; i++) {
+		pp = parspec[i];
+		fprintf(stdout,
+		    "[INFO] Set Default for %s = %s\n", pp->name, pp->def);
+		pp->func(pp, pp->def);
+	}
+}
+
+/*--------------------------------------------------------------------*/
+
+static void
+MCF_ParamSet(const char *param, const char *val)
+{
+	const struct parspec *pp;
+
+	pp = mcf_findpar(param);
+	if (pp != NULL) {
+		pp->func(pp, val);
+		return;
+	}
+	fprintf(stderr, "[ERROR] Unknown parameter \"%s\".", param);
+	exit(1);
+}
+
+/*--------------------------------------------------------------------*/
+
+static void
+tweak_diag_bitmap(const struct parspec *par, const char *arg)
+{
+	unsigned u;
+
+	(void)par;
+	if (arg != NULL) {
+		u = strtoul(arg, NULL, 0);
+		master.diag_bitmap = u;
+	} else {
+		fprintf(stderr, "0x%x", master.diag_bitmap);
+	}
+}
+
+/*--------------------------------------------------------------------*/
+
+static void
+tweak_generic_timeout(volatile unsigned *dst, const char *arg)
+{
+	unsigned u;
+
+	if (arg != NULL) {
+		u = strtoul(arg, NULL, 0);
+		if (u == 0) {
+			fprintf(stdout,
+			    "[ERROR] Timeout must be greater than zero\n");
+			exit(2);
+		}
+		*dst = u;
+	} else
+		fprintf(stdout, "%u", *dst);
+}
+
+/*--------------------------------------------------------------------*/
+
+static void
+tweak_timeout(const struct parspec *par, const char *arg)
+{
+	volatile unsigned *dest;
+
+	dest = par->priv;
+	tweak_generic_timeout(dest, arg);
+}
+
+/*--------------------------------------------------------------------*/
+
+static const struct parspec input_parspec[] = {
+	{ "connect_timeout", tweak_timeout,
+		&master.connect_timeout, 0, UINT_MAX,
+		"Default connection timeout for backend connections. "
+		"We only try to connect to the backend for this many "
+		"seconds before giving up. ",
+		"3", "s" },
+	{ "diag_bitmap", tweak_diag_bitmap, 0, 0, 0,
+		"Bitmap controlling diagnostics code:\n"
+		"  0x00000001 - CNT_Session states.\n"
+		"  0x00000002 - socket error messages.\n"
+		"Use 0x notation and do the bitor in your head :-)\n",
+		"0", "bitmap" },
+	{ "read_timeout", tweak_timeout,
+		&master.read_timeout, 1, UINT_MAX,
+		"Default timeout for receiving bytes from backend. "
+		"We only wait for this many seconds for bytes "
+		"before giving up.",
+		"6", "s" },
+	{ "write_timeout", tweak_timeout, &master.write_timeout, 0, 0,
+		"Send timeout for client connections. "
+		"If the HTTP response hasn't been transmitted in this many\n"
+		"seconds the session is closed. \n",
+		"6", "seconds" },
+	{ NULL, NULL, NULL }
+};
+
+static void
+MCF_ParamInit(void)
+{
+
+	MCF_AddParams(input_parspec);
+	MCF_SetDefaults();
+	params = &master;
+}
+
+/*--------------------------------------------------------------------*/
+
 static void
 SIP_readfile(const char* file)
 {
@@ -2491,8 +2666,10 @@ int
 main(int argc, char *argv[])
 {
 	int ch;
-	char *end;
+	char *end, *p;
 	const char *s_arg = NULL;
+
+	MCF_ParamInit();
 
 	while ((ch = getopt(argc, argv, "c:m:r:s:")) != -1) {
 		switch (ch) {
@@ -2513,6 +2690,14 @@ main(int argc, char *argv[])
 				    "[ERROR] illegal number for -m\n");
 				exit(1);
 			}
+			break;
+		case 'p':
+			p = strchr(optarg, '=');
+			if (p == NULL)
+				usage();
+			AN(p);
+			*p++ = '\0';
+			MCF_ParamSet(optarg, p);
 			break;
 		case 'r':
 			errno = 0;
