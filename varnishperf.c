@@ -62,6 +62,7 @@
 
 struct parspec;
 struct worker;
+struct wq;
 
 /*--------------------------------------------------------------------*/
 
@@ -270,6 +271,13 @@ struct worker {
 	VTAILQ_ENTRY(worker)	list;
 };
 VTAILQ_HEAD(workerhead, worker);
+
+struct workerthread {
+	unsigned		magic;
+#define WORKERTHREAD_MAGIC	0xadcf1234
+	struct wq		*wq;
+	struct worker		w;
+};
 
 /*--------------------------------------------------------------------*/
 
@@ -1142,16 +1150,18 @@ WRK_thread(void *arg)
 {
 	struct epoll_event *ev, *ep;
 	struct sess *sp;
-	struct worker *w, ww;
+	struct worker *w;
+	struct workerthread *wt;
 	struct wq *qp;
 	int i, n;
 
-	CAST_OBJ_NOTNULL(qp, arg, WQ_MAGIC);
+	CAST_OBJ_NOTNULL(wt, arg, WORKERTHREAD_MAGIC);
+	CAST_OBJ_NOTNULL(qp, wt->wq, WQ_MAGIC);
 
 	ev = malloc(sizeof(*ev) * EPOLLEVENT_MAX);
 	AN(ev);
 
-	w = &ww;
+	w = &wt->w;
 	bzero(w, sizeof(*w));
 	w->magic = WORKER_MAGIC;
 	w->fd = epoll_create(1);
@@ -1200,6 +1210,10 @@ WRK_thread(void *arg)
 			qp->lqueue--;
 		} else {
 			assert(w->nwant == 0);
+			if (stop) {
+				WQ_UNLOCK(qp);
+				break;
+			}
 			VTAILQ_INSERT_HEAD(&qp->idle, w, list);
 			Lck_CondWait(&w->cond, &qp->mtx);
 		}
@@ -1215,7 +1229,11 @@ WRK_thread(void *arg)
 		w->sp = NULL;
 	}
 
-	assert(0 == 1);
+	fprintf(stdout, "[INFO] Finishing the worker thread.\n");
+	AZ(pthread_cond_destroy(&w->cond));
+	COT_fini(&w->cb);
+	AZ(close(w->fd));
+	free(ev);
 	NEEDLESS_RETURN(NULL);
 }
 
@@ -1689,6 +1707,7 @@ SCH_thread(void *arg)
 		COT_clock(&scp->cb);
 		TIM_sleep(0.1);
 	}
+	printf("[INFO] Finishing the scheduler thread.\n");
 	callout_stop(&scp->cb, &scp->co);
 	COT_fini(&scp->cb);
 	NEEDLESS_RETURN(NULL);
@@ -1767,6 +1786,7 @@ PEF_Init(void)
 static void
 PEF_Run(void)
 {
+	struct workerthread wt[c_arg];
 	pthread_t tp[c_arg], schedtp;
 	int i;
 
@@ -1776,12 +1796,17 @@ PEF_Run(void)
 	VTAILQ_INIT(&wq.idle);
 	VTAILQ_INIT(&wq.queue);
 
-	for (i = 0; i < c_arg; i++)
-		AZ(pthread_create(&tp[i], NULL, WRK_thread, &wq));
+	for (i = 0; i < c_arg; i++) {
+		wt[i].magic = WORKERTHREAD_MAGIC;
+		wt[i].wq = &wq;
+		AZ(pthread_create(&tp[i], NULL, WRK_thread, &wt[i]));
+	}
 	AZ(pthread_create(&schedtp, NULL, SCH_thread, &wq));
 	AZ(pthread_join(schedtp, NULL));
-	for (i = 0; i < c_arg; i++)
+	for (i = 0; i < c_arg; i++) {
+		AZ(pthread_cond_signal(&wt[i].w.cond));
 		AZ(pthread_join(tp[i], NULL));
+	}
 	PEF_summary();
 }
 
