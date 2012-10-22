@@ -41,6 +41,7 @@ How to use
     [INFO] Set Default for write_timeout = 6
     [ERROR] No URLs found.
     [INFO] usage: varnishperf [options] urlfile
+    [INFO]    -c N                         # Limits total TCP connections
     [INFO]    -m N                         # Limits concurrent TCP connections
     [INFO]    -p param=value               # set parameter
     [INFO]    -r N                         # Sets rate
@@ -49,6 +50,14 @@ How to use
     [INFO]    -z                           # Shows all statistic fields
 
 Each options indicate:
+
+* -c N
+
+  Limits the number of total connections.  If c_arg is 0, it points unlimited.
+  Total connection is reached to this value, the program will be terminated
+  gracefully.
+
+  Default value is 0.
 
 * -m N
 

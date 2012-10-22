@@ -2717,6 +2717,7 @@ usage(void)
 
 	fprintf(stdout, "[INFO] usage: varnishperf [options] urlfile\n");
 #define FMT "[INFO]    %-28s # %s\n"
+	fprintf(stdout, FMT, "-c N", "Limits total TCP connections");
 	fprintf(stdout, FMT, "-m N", "Limits concurrent TCP connections");
 	fprintf(stderr, FMT, "-p param=value", "set parameter");
 	fprintf(stdout, FMT, "-r N", "Sets rate");
