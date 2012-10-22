@@ -36,6 +36,7 @@
 #include <fcntl.h>
 #include <math.h>
 #include <netdb.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -212,6 +213,7 @@ struct sess {
 
 	struct callout		co;
 
+	ssize_t			cl;		/* Content Length */
 	ssize_t			roffset;
 	ssize_t			woffset;
 #define	MAXHDRSIZ		(4 * 1024)
@@ -471,7 +473,9 @@ cnt_timeout(struct sess *sp)
 			sp->t_fbend = TIM_real();
 		sp->step = STP_HTTP_ERROR;
 		break;
-	case STP_HTTP_RXRESP_BODY:
+	case STP_HTTP_RXRESP_BODY_CL:
+	case STP_HTTP_RXRESP_BODY_CHUNKED:
+	case STP_HTTP_RXRESP_BODY_EOF:
 		if (isnan(sp->t_bodyend))
 			sp->t_bodyend = TIM_real();
 		sp->step = STP_HTTP_ERROR;
@@ -523,8 +527,6 @@ cnt_start(struct sess *sp)
 static int
 cnt_http_start(struct sess *sp)
 {
-
-	VSC_C_main->n_req++;
 
 	/* XXX doesn't care for IPv6 at all */
 	sp->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -615,6 +617,38 @@ cnt_http_connect(struct sess *sp)
 	}
 	if (isnan(sp->t_connend))
 		sp->t_connend = TIM_real();
+	sp->step = STP_HTTP_TXREQ_INIT;
+	return (0);
+}
+
+/*--------------------------------------------------------------------
+ * Check that there is still something at the far end of a given socket.
+ * We poll the fd with instant timeout, if there are any events we can't
+ * use it (backends are not allowed to pipeline).
+ */
+
+static int
+vbe_CheckFd(int fd)
+{
+	struct pollfd pfd;
+
+	pfd.fd = fd;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+	return(poll(&pfd, 1, 0) == 0);
+}
+
+static int
+cnt_http_txreq_init(struct sess *sp)
+{
+
+	if (!vbe_CheckFd(sp->fd)) {
+		fprintf(stdout,
+		    "[ERROR] something is still at the socket buffer.\n");
+		sp->step = STP_HTTP_ERROR;
+		return (0);
+	}
+	sp->woffset = 0;
 	sp->step = STP_HTTP_TXREQ;
 	return (0);
 }
@@ -649,6 +683,7 @@ wantwrite:
 		SES_Wait(sp, SESS_WANT_WRITE);
 		return (1);
 	}
+	VSC_C_main->n_req++;
 	sp->calls++;
 	sp->step = STP_HTTP_RXRESP;
 	return (0);
@@ -807,6 +842,7 @@ cnt_http_rxresp_hdr(struct sess *sp)
 {
 	ssize_t l;
 	int i, r;
+	char *end, *p;
 
 retry:
 	l = read(sp->fd, sp->resp + sp->roffset,
@@ -868,60 +904,75 @@ retry:
 	sp->roffset = 0;
 	if (i < l)
 		sp->roffset += l - i;
-	sp->step = STP_HTTP_RXRESP_BODY;
+	p = http_find_header(sp->resphdr, "Content-Length");
+	if (p != NULL) {
+		errno = 0;
+		sp->cl = strtoul(p, &end, 0);
+		if (errno == ERANGE || end == p || *end)
+			assert(0 == 1);
+		sp->step = STP_HTTP_RXRESP_BODY_CL;
+		return (0);
+	}
+	p = http_find_header(sp->resphdr, "Transfer-Encoding");
+	if (p != NULL && !strcmp(p, "chunked")) {
+		sp->step = STP_HTTP_RXRESP_BODY_CHUNKED;
+		return (0);
+	}
+	sp->step = STP_HTTP_RXRESP_BODY_EOF;
 	return (0);
 }
 
-/*--------------------------------------------------------------------
- * Reads HTTP body until the state machine got a EOF from the sender.
- * So at this moment, no parsing headers and body at all.  This
- * implementation is right now because it always attaches
- * "Connection: close" header.
- */
 static int
-cnt_http_rxresp_body(struct sess *sp)
+cnt_http_rxresp_body_cl(struct sess *sp)
 {
-	char buf[64 * 1024], *p;
+	char buf[64 * 1024];
 	ssize_t l;
 
-	while ((l = read(sp->fd, buf, sizeof(buf))) > 0)
-		sp->roffset += l;
-	if (l == -1) {
-		if (l == -1 && errno == EAGAIN) {
-			callout_reset(&sp->wrk->cb, &sp->co,
-			    CALLOUT_SECTOTICKS(params->read_timeout),
-			    cnt_timeout_tick, sp);
-			SES_Wait(sp, SESS_WANT_READ);
-			return (1);
-		}
-		if (isnan(sp->t_bodyend))
-			sp->t_bodyend = TIM_real();
-		SES_errno(errno);
-		if (params->diag_bitmap & 0x2)
-			fprintf(stdout, "[ERROR] read(2) error: %d %s\n", errno,
-			    strerror(errno));
-		sp->step = STP_HTTP_ERROR;
-		return (0);
-	}
-	if (isnan(sp->t_bodyend))
-		sp->t_bodyend = TIM_real();
-	/*
-	 * Got a EOF from the sender.  Checks the body length if
-	 * Content-Length header exists.
-	 */
-	p = http_find_header(sp->resphdr, "Content-Length");
-	if (p != NULL) {
-		l = (ssize_t)strtoul(p, NULL, 0);
-		if (l != sp->roffset) {
-			fprintf(stdout,
-			    "Content-Length isn't matched:"
-			    " %jd / %jd\n", l, sp->roffset);
+	while (sp->roffset < sp->cl) {
+		l = read(sp->fd, buf, sizeof(buf));
+		if (l == -1) {
+			if (l == -1 && errno == EAGAIN) {
+				callout_reset(&sp->wrk->cb, &sp->co,
+				    CALLOUT_SECTOTICKS(params->read_timeout),
+				    cnt_timeout_tick, sp);
+				SES_Wait(sp, SESS_WANT_READ);
+				return (1);
+			}
+			if (isnan(sp->t_bodyend))
+				sp->t_bodyend = TIM_real();
+			SES_errno(errno);
+			if (params->diag_bitmap & 0x2)
+				fprintf(stdout,
+				    "[ERROR] read(2) error: %d %s\n", errno,
+				    strerror(errno));
 			sp->step = STP_HTTP_ERROR;
 			return (0);
 		}
+		sp->roffset += l;
+		assert(sp->roffset <= sp->cl);
 	}
+	if (isnan(sp->t_bodyend))
+		sp->t_bodyend = TIM_real();
 	sp->step = STP_HTTP_OK;
 	return (0);
+}
+
+static int
+cnt_http_rxresp_body_chunked(struct sess *sp)
+{
+
+	(void)sp;
+	assert(0 == 1);
+	return (0);
+}
+
+static int
+cnt_http_rxresp_body_eof(struct sess *sp)
+{
+
+	(void)sp;
+	assert(0 == 1);
+	return (-1);
 }
 
 static int
@@ -987,6 +1038,10 @@ cnt_http_ok(struct sess *sp)
 		}
 	}
 skip:
+	if (sp->calls < C_arg) {
+		sp->step = STP_HTTP_TXREQ_INIT;
+		return (0);
+	}
 	sp->step = STP_HTTP_DONE;
 	return (0);
 }
