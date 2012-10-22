@@ -180,6 +180,15 @@ static struct srcip		*srcips;
 static int			num_srcips;
 static int			max_srcips;
 
+/*--------------------------------------------------------------------
+ * Pointer aligment magic
+ */
+
+#define PALGN		(sizeof(void *) - 1)
+#define PAOK(p)		(((uintptr_t)(p) & PALGN) == 0)
+#define PRNDDN(p)	((uintptr_t)(p) & ~PALGN)
+#define PRNDUP(p)	(((uintptr_t)(p) + PALGN) & ~PALGN)
+
 /*--------------------------------------------------------------------*/
 
 typedef struct {
@@ -196,11 +205,25 @@ struct http_conn {
 #define HTTP_CONN_MAGIC		0x3e19edd1
 
 	int			fd;
-	char			*buf;
-	ssize_t			buflen;
-	char			*buf_r;
+	unsigned		maxbytes;
+	struct ws		*ws;
 	txt			rxbuf;
 	txt			pipeline;
+};
+
+/*--------------------------------------------------------------------
+ * Workspace structure for quick memory allocation.
+ */
+
+struct ws {
+	unsigned		magic;
+#define WS_MAGIC		0x35fac554
+	unsigned		overflow;	/* workspace overflowed */
+	const char		*id;		/* identity */
+	char			*s;		/* (S)tart of buffer */
+	char			*f;		/* (F)ree pointer */
+	char			*r;		/* (R)eserved length */
+	char			*e;		/* (E)nd of buffer */
 };
 
 /*--------------------------------------------------------------------*/
@@ -242,8 +265,9 @@ struct sess {
 	ssize_t			roffset;
 	ssize_t			woffset;
 	struct http_conn	htc;
-#define	MAXHDRSIZ		(4 * 1024)
-	char			resp[MAXHDRSIZ];
+	struct ws		ws[1];
+#define	WSBUFMAX		(8 * 1024)
+	char			_wsbuf[WSBUFMAX];
 #define	MAXHDR			64
 	char			*resphdr[MAXHDR];
 
@@ -402,6 +426,99 @@ Tlen(const txt t)
 	return ((unsigned)(t.e - t.b));
 }
 
+/*--------------------------------------------------------------------
+ * A normal pointer difference is signed, but we never want a negative
+ * value so this little tool will make sure we don't get that.
+ */
+
+static inline unsigned
+pdiff(const void *b, const void *e)
+{
+
+	assert(b <= e);
+	return
+	    ((unsigned)((const unsigned char *)e - (const unsigned char *)b));
+}
+
+/*--------------------------------------------------------------------*/
+
+static void
+WS_Assert(const struct ws *ws)
+{
+
+	CHECK_OBJ_NOTNULL(ws, WS_MAGIC);
+	fprintf(stdout, "WS(%p = (%s, %p %u %u %u)",
+	    ws, ws->id, ws->s, pdiff(ws->s, ws->f),
+	    ws->r == NULL ? 0 : pdiff(ws->f, ws->r),
+	    pdiff(ws->s, ws->e));
+	assert(ws->s != NULL);
+	assert(PAOK(ws->s));
+	assert(ws->e != NULL);
+	assert(PAOK(ws->e));
+	assert(ws->s < ws->e);
+	assert(ws->f >= ws->s);
+	assert(ws->f <= ws->e);
+	assert(PAOK(ws->f));
+	if (ws->r) {
+		assert(ws->r > ws->s);
+		assert(ws->r <= ws->e);
+		assert(PAOK(ws->r));
+	}
+}
+
+static unsigned
+WS_Reserve(struct ws *ws, unsigned bytes)
+{
+	unsigned b2;
+
+	WS_Assert(ws);
+	assert(ws->r == NULL);
+	if (bytes == 0)
+		b2 = ws->e - ws->f;
+	else if (bytes > ws->e - ws->f)
+		b2 = ws->e - ws->f;
+	else
+		b2 = bytes;
+	b2 = PRNDDN(b2);
+	xxxassert(ws->f + b2 <= ws->e);
+	ws->r = ws->f + b2;
+	fprintf(stdout, "WS_Reserve(%p, %u/%u) = %u",
+	    ws, b2, bytes, pdiff(ws->f, ws->r));
+	WS_Assert(ws);
+	return (pdiff(ws->f, ws->r));
+}
+
+static void
+WS_ReleaseP(struct ws *ws, char *ptr)
+{
+	WS_Assert(ws);
+	fprintf(stdout, "WS_ReleaseP(%p, %p)", ws, ptr);
+	assert(ws->r != NULL);
+	assert(ptr >= ws->f);
+	assert(ptr <= ws->r);
+	ws->f += PRNDUP(ptr - ws->f);
+	ws->r = NULL;
+	WS_Assert(ws);
+}
+
+static void
+WS_Init(struct ws *ws, const char *id, void *space, unsigned len)
+{
+
+	fprintf(stdout,
+	    "[DEBUG] WS_Init(%p, \"%s\", %p, %u)", ws, id, space, len);
+	assert(space != NULL);
+	memset(ws, 0, sizeof *ws);
+	ws->magic = WS_MAGIC;
+	ws->s = space;
+	assert(PAOK(space));
+	ws->e = ws->s + len;
+	assert(PAOK(len));
+	ws->f = ws->s;
+	ws->id = id;
+	WS_Assert(ws);
+}
+
 /*--------------------------------------------------------------------*/
 
 static inline int
@@ -530,17 +647,17 @@ htc_header_complete(txt *t)
 /*--------------------------------------------------------------------*/
 
 static void
-HTC_Init(struct http_conn *htc, char *buf, ssize_t buflen, int fd)
+HTC_Init(struct http_conn *htc, struct ws *ws, int fd, unsigned maxbytes)
 {
 
 	htc->magic = HTTP_CONN_MAGIC;
+	htc->ws = ws;
 	htc->fd = fd;
-	htc->buf = buf;
-	htc->buf_r = buf + buflen;
-	htc->buflen = buflen;
+	htc->maxbytes = maxbytes;
 
-	htc->rxbuf.b = buf;
-	htc->rxbuf.e = buf;
+	(void)WS_Reserve(htc->ws, htc->maxbytes);
+	htc->rxbuf.b = ws->f;
+	htc->rxbuf.e = ws->f;
 	*htc->rxbuf.e = '\0';
 	htc->pipeline.b = NULL;
 	htc->pipeline.e = NULL;
@@ -580,14 +697,22 @@ HTC_Rx(struct http_conn *htc)
 	int i;
 
 	CHECK_OBJ_NOTNULL(htc, HTTP_CONN_MAGIC);
-	i = (htc->buf_r - htc->rxbuf.e) - 1;	/* space for NUL */
-	if (i <= 0)
+	AN(htc->ws->r);
+	i = (htc->ws->r - htc->rxbuf.e) - 1;	/* space for NUL */
+	if (i <= 0) {
+		WS_ReleaseP(htc->ws, htc->rxbuf.b);
 		return (-1);
+	}
 	i = read(htc->fd, htc->rxbuf.e, i);
-	if (i == -1)
+	if (i == -1) {
+		if (errno != EAGAIN)
+			WS_ReleaseP(htc->ws, htc->rxbuf.b);
 		return (-2);
-	if (i == 0)
+	}
+	if (i == 0) {
+		WS_ReleaseP(htc->ws, htc->rxbuf.b);
 		return (-3);
+	}
 	VSC_C_main->n_rxbytes += i;
 	htc->rxbuf.e += i;
 	*htc->rxbuf.e = '\0';
@@ -699,6 +824,7 @@ cnt_start(struct sess *sp)
 {
 	static int cnt = 0;
 
+	WS_Init(sp->ws, "sess workspace", sp->_wsbuf, sizeof(sp->_wsbuf));
 	callout_init(&sp->co, 0);
 	sp->url = urls[cnt++ % num_urls];
 	sp->t_start = TIM_real();
@@ -883,7 +1009,7 @@ static int
 cnt_http_rxresp(struct sess *sp)
 {
 
-	HTC_Init(&sp->htc, sp->resp, sizeof(sp->resp), sp->fd);
+	HTC_Init(&sp->htc, sp->ws, sp->fd, /* XXX */4096);
 	sp->roffset = 0;
 	sp->step = STP_HTTP_RXRESP_HDR;
 	return (0);
@@ -922,7 +1048,7 @@ http_probe_splitheader(struct sess *sp)
 	hh = sp->resphdr;
 
 	n = 0;
-	p = sp->resp;
+	p = htc->rxbuf.b;
 
 	/* PROTO */
 	while (vct_islws(*p))
