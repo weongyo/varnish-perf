@@ -43,6 +43,7 @@ How to use
     [INFO] usage: varnishperf [options] urlfile
     [INFO]    -c N                         # Sets number of threads
     [INFO]    -m N                         # Limits concurrent TCP connections
+    [INFO]    -p param=value               # set parameter
     [INFO]    -r N                         # Sets rate
     [INFO]    -s file                      # Sets file path containing src IP
     [INFO]    -z                           # Shows all statistic fields
