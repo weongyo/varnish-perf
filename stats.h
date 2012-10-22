@@ -57,8 +57,10 @@ PERFSTAT_u64(n_status_9xx,	'c', "HTTP response status for 9XX", "times")
 
 /* Errors */
 PERFSTAT_u64(n_eof,		'c', "Unexpected EOF", "times")
+PERFSTAT_u64(n_eaddrinuse,	'c', "Address already in use", "times")
 PERFSTAT_u64(n_econnreset,	'c', "Connection reset by peer", "times")
 PERFSTAT_u64(n_econnrefused,	'c', "Connection refused", "times")
+PERFSTAT_u64(n_emfile,		'c', "Too many open files", "times")
 PERFSTAT_u64(n_toolonghdr,	'c', "Too long HTTP response header", "times")
 PERFSTAT_u64(n_tooearlycrlf,	'c', "Too early CRLF", "times")
 PERFSTAT_u64(n_wrongres,	'c', "Wrong HTTP response format", "times")

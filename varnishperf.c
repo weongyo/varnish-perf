@@ -182,6 +182,29 @@ static int			max_srcips;
 
 /*--------------------------------------------------------------------*/
 
+typedef struct {
+	char			*b;
+	char			*e;
+} txt;
+
+/*--------------------------------------------------------------------
+ * HTTP Protocol connection structure
+ */
+
+struct http_conn {
+	unsigned		magic;
+#define HTTP_CONN_MAGIC		0x3e19edd1
+
+	int			fd;
+	char			*buf;
+	ssize_t			buflen;
+	char			*buf_r;
+	txt			rxbuf;
+	txt			pipeline;
+};
+
+/*--------------------------------------------------------------------*/
+
 enum step {
 #define STEP(l, u)	STP_##u,
 #include "steps.h"
@@ -218,6 +241,7 @@ struct sess {
 	ssize_t			cl;		/* Content Length */
 	ssize_t			roffset;
 	ssize_t			woffset;
+	struct http_conn	htc;
 #define	MAXHDRSIZ		(4 * 1024)
 	char			resp[MAXHDRSIZ];
 #define	MAXHDR			64
@@ -357,6 +381,29 @@ static double	TIM_real(void);
 
 /*--------------------------------------------------------------------*/
 
+static inline void
+Tcheck(const txt t)
+{
+
+	AN(t.b);
+	AN(t.e);
+	assert(t.b <= t.e);
+}
+
+/*--------------------------------------------------------------------
+ * unsigned length of a txt
+ */
+
+static inline unsigned
+Tlen(const txt t)
+{
+
+	Tcheck(t);
+	return ((unsigned)(t.e - t.b));
+}
+
+/*--------------------------------------------------------------------*/
+
 static inline int
 VTCP_Check(int a)
 {
@@ -440,6 +487,147 @@ vca_close_session(struct sess *sp, const char *why)
 		assert(i == 0 || errno != EBADF);	/* XXX EINVAL seen */
 	}
 	sp->fd = -1;
+}
+
+/*--------------------------------------------------------------------
+ * Check if we have a complete HTTP request or response yet
+ *
+ * Return values:
+ *	 0  No, keep trying
+ *	>0  Yes, it is this many bytes long.
+ */
+
+static int
+htc_header_complete(txt *t)
+{
+	const char *p;
+
+	Tcheck(*t);
+	assert(*t->e == '\0');
+	/* Skip any leading white space */
+	for (p = t->b ; vct_issp(*p); p++)
+		continue;
+	if (p == t->e) {
+		/* All white space */
+		t->e = t->b;
+		*t->e = '\0';
+		return (0);
+	}
+	while (1) {
+		p = strchr(p, '\n');
+		if (p == NULL)
+			return (0);
+		p++;
+		if (*p == '\r')
+			p++;
+		if (*p == '\n')
+			break;
+	}
+	p++;
+	return (p - t->b);
+}
+
+/*--------------------------------------------------------------------*/
+
+static void
+HTC_Init(struct http_conn *htc, char *buf, ssize_t buflen, int fd)
+{
+
+	htc->magic = HTTP_CONN_MAGIC;
+	htc->fd = fd;
+	htc->buf = buf;
+	htc->buf_r = buf + buflen;
+	htc->buflen = buflen;
+
+	htc->rxbuf.b = buf;
+	htc->rxbuf.e = buf;
+	*htc->rxbuf.e = '\0';
+	htc->pipeline.b = NULL;
+	htc->pipeline.e = NULL;
+}
+
+/*--------------------------------------------------------------------
+ * Return 1 if we have a complete HTTP procol header
+ */
+
+static int
+HTC_Complete(struct http_conn *htc)
+{
+	int i;
+
+	CHECK_OBJ_NOTNULL(htc, HTTP_CONN_MAGIC);
+	i = htc_header_complete(&htc->rxbuf);
+	assert(i >= 0);
+	if (i == 0)
+		return (0);
+	AZ(htc->pipeline.b);
+	AZ(htc->pipeline.e);
+	if (htc->rxbuf.b + i < htc->rxbuf.e) {
+		htc->pipeline.b = htc->rxbuf.b + i;
+		htc->pipeline.e = htc->rxbuf.e;
+		htc->rxbuf.e = htc->pipeline.b;
+	}
+	return (1);
+}
+
+/*--------------------------------------------------------------------
+ * Receive more HTTP protocol bytes
+ */
+
+static int
+HTC_Rx(struct http_conn *htc)
+{
+	int i;
+
+	CHECK_OBJ_NOTNULL(htc, HTTP_CONN_MAGIC);
+	i = (htc->buf_r - htc->rxbuf.e) - 1;	/* space for NUL */
+	if (i <= 0)
+		return (-1);
+	i = read(htc->fd, htc->rxbuf.e, i);
+	if (i == -1)
+		return (-2);
+	if (i == 0)
+		return (-3);
+	VSC_C_main->n_rxbytes += i;
+	htc->rxbuf.e += i;
+	*htc->rxbuf.e = '\0';
+	return (HTC_Complete(htc));
+}
+
+/*--------------------------------------------------------------------
+ * Read up to len bytes, returning pipelined data first.
+ */
+
+static ssize_t
+HTC_Read(struct http_conn *htc, void *d, size_t len)
+{
+	size_t l;
+	unsigned char *p;
+	ssize_t i;
+
+	CHECK_OBJ_NOTNULL(htc, HTTP_CONN_MAGIC);
+	l = 0;
+	p = d;
+	if (htc->pipeline.b) {
+		l = Tlen(htc->pipeline);
+		if (l > len)
+			l = len;
+		memcpy(p, htc->pipeline.b, l);
+		p += l;
+		len -= l;
+		htc->pipeline.b += l;
+		if (htc->pipeline.b == htc->pipeline.e)
+			htc->pipeline.b = htc->pipeline.e = NULL;
+		assert(l > 0);
+		return (l);
+	}
+	if (len == 0)
+		return (l);
+	i = read(htc->fd, p, len);
+	if (i < 0) {
+		return (i);
+	}
+	return (i + l);
 }
 
 /*--------------------------------------------------------------------*/
@@ -695,6 +883,7 @@ static int
 cnt_http_rxresp(struct sess *sp)
 {
 
+	HTC_Init(&sp->htc, sp->resp, sizeof(sp->resp), sp->fd);
 	sp->roffset = 0;
 	sp->step = STP_HTTP_RXRESP_HDR;
 	return (0);
@@ -725,6 +914,7 @@ http_find_header(char * const *hh, const char *hdr)
 static int
 http_probe_splitheader(struct sess *sp)
 {
+	struct http_conn *htc = &sp->htc;
 	char *p, *q, **hh;
 	int n;
 
@@ -797,60 +987,28 @@ http_probe_splitheader(struct sess *sp)
 		*q = '\0';
 	}
 	p += vct_skipcrlf(p);
-	if (*p != '\0')
+	if (p != htc->rxbuf.e)
 		return (-1);
 	return (0);
-}
-
-/*--------------------------------------------------------------------
- * Check if we have a complete HTTP request or response yet
- *
- * Return values:
- *	 0  No, keep trying
- *	>0  Yes, it is this many bytes long.
- */
-
-static int
-http_header_complete(char *b, char *e)
-{
-	const char *p;
-
-	assert(*e == '\0');
-	/* Skip any leading white space */
-	for (p = b ; vct_issp(*p); p++)
-		continue;
-	if (p == e) {
-		/* All white space */
-		e = b;
-		*e = '\0';
-		return (0);
-	}
-	while (1) {
-		p = strchr(p, '\n');
-		if (p == NULL)
-			return (0);
-		p++;
-		if (*p == '\r')
-			p++;
-		if (*p == '\n')
-			break;
-	}
-	p++;
-	return (p - b);
 }
 
 static int
 cnt_http_rxresp_hdr(struct sess *sp)
 {
-	ssize_t l;
-	int i, r;
+	int l, r;
 	char *end, *p;
 
 retry:
-	l = read(sp->fd, sp->resp + sp->roffset,
-	    sizeof(sp->resp) - sp->roffset);
-	if (l <= 0) {
-		if (l == -1 && errno == EAGAIN) {
+	l = HTC_Rx(&sp->htc);
+	switch (l) {
+	case -1:
+		VSC_C_main->n_toolonghdr++;
+		if (params->diag_bitmap & 0x2)
+			fprintf(stdout, "[ERROR] too big header response\n");
+		sp->step = STP_HTTP_ERROR;
+		return (0);
+	case -2:
+		if (errno == EAGAIN) {
 			callout_reset(&sp->wrk->cb, &sp->co,
 			    CALLOUT_SECTOTICKS(params->read_timeout),
 			    cnt_timeout_tick, sp);
@@ -859,38 +1017,29 @@ retry:
 		}
 		if (isnan(sp->t_fbend))
 			sp->t_fbend = TIM_real();
-		if (l == 0) {
-			SES_errno(0);
-			if (params->diag_bitmap & 0x2)
-				fprintf(stdout,
-				    "[ERROR] %s: read(2) error: unexpected EOF"
-				    " (offset %zd)\n", __func__, sp->roffset);
-			sp->step = STP_HTTP_ERROR;
-			return (0);
-		}
 		SES_errno(errno);
 		if (params->diag_bitmap & 0x2)
 			fprintf(stdout, "[ERROR] %s: read(2) error: %d %s\n",
 			    __func__, errno, strerror(errno));
 		sp->step = STP_HTTP_ERROR;
 		return (0);
+	case -3:
+		if (isnan(sp->t_fbend))
+			sp->t_fbend = TIM_real();
+		SES_errno(0);
+		if (params->diag_bitmap & 0x2)
+			fprintf(stdout,
+			    "[ERROR] %s: read(2) error: unexpected EOF"
+			    " (offset %zd)\n", __func__, sp->roffset);
+		sp->step = STP_HTTP_ERROR;
+		return (0);
+	default:
+		if (l == 0)
+			goto retry;
+		assert(l > 0);
 	}
 	if (isnan(sp->t_fbend))
 		sp->t_fbend = TIM_real();
-	VSC_C_main->n_rxbytes += l;
-	sp->roffset += l;
-	sp->resp[sp->roffset] = '\0';
-	if (sp->roffset >= sizeof(sp->resp)) {
-		VSC_C_main->n_toolonghdr++;
-		if (params->diag_bitmap & 0x2)
-			fprintf(stdout, "[ERROR] too big header response\n");
-		sp->step = STP_HTTP_ERROR;
-		return (0);
-	}
-	i = http_header_complete(sp->resp, sp->resp + sp->roffset);
-	if (i == 0)
-		goto retry;
-	sp->resp[i] = '\0';
 	r = http_probe_splitheader(sp);
 	if (r == -1) {
 		VSC_C_main->n_wrongres++;
@@ -901,11 +1050,6 @@ retry:
 	}
 	if (isnan(sp->t_bodystart))
 		sp->t_bodystart = TIM_real();
-	/* Handles sp->resp buffer remained. */
-	l = sp->roffset;
-	sp->roffset = 0;
-	if (i < l)
-		sp->roffset += l - i;
 	p = http_find_header(sp->resphdr, "Content-Length");
 	if (p != NULL) {
 		errno = 0;
@@ -932,7 +1076,7 @@ cnt_http_rxresp_body_cl(struct sess *sp)
 	ssize_t l;
 
 	while (sp->roffset < sp->cl) {
-		l = read(sp->fd, buf, sizeof(buf));
+		l = HTC_Read(&sp->htc, buf, sizeof(buf));
 		if (l == -1) {
 			if (l == -1 && errno == EAGAIN) {
 				callout_reset(&sp->wrk->cb, &sp->co,
@@ -976,7 +1120,7 @@ cnt_http_rxresp_body_eof(struct sess *sp)
 	ssize_t l;
 
 	while (1) {
-		l = read(sp->fd, buf, sizeof(buf));
+		l = HTC_Read(&sp->htc, buf, sizeof(buf));
 		if (l == -1) {
 			if (l == -1 && errno == EAGAIN) {
 				callout_reset(&sp->wrk->cb, &sp->co,
@@ -1340,7 +1484,8 @@ WRK_thread(void *arg)
 		w->sp = NULL;
 	}
 
-	fprintf(stdout, "[INFO] Finishing the worker thread.\n");
+	if (params->diag_bitmap & 0x4)
+		fprintf(stdout, "[INFO] Finishing the worker thread.\n");
 	free(ev);
 	NEEDLESS_RETURN(NULL);
 }
@@ -1627,6 +1772,12 @@ SES_errno(int error)
 	case 0:
 		VSC_C_main->n_eof++;
 		break;
+	case EADDRINUSE:
+		VSC_C_main->n_eaddrinuse++;
+		break;
+	case EMFILE:
+		VSC_C_main->n_emfile++;
+		break;
 	case ECONNREFUSED:
 		VSC_C_main->n_econnrefused++;
 		break;
@@ -1819,7 +1970,8 @@ SCH_thread(void *arg)
 		COT_clock(&scp->cb);
 		TIM_sleep(0.1);
 	}
-	printf("[INFO] Finishing the scheduler thread.\n");
+	if (params->diag_bitmap & 0x4)
+		printf("[INFO] Finishing the scheduler thread.\n");
 	callout_stop(&scp->cb, &scp->co);
 	COT_fini(&scp->cb);
 	NEEDLESS_RETURN(NULL);
@@ -1915,11 +2067,13 @@ PEF_Run(void)
 		AZ(pthread_create(&tp[i], NULL, WRK_thread, &wt[i]));
 	}
 	AZ(pthread_create(&schedtp, NULL, SCH_thread, &wq));
-	fprintf(stdout, "[INFO] Joining the scheduler thread\n");
+	if (params->diag_bitmap & 0x4)
+		fprintf(stdout, "[INFO] Joining the scheduler thread\n");
 	AZ(pthread_join(schedtp, NULL));
 	for (i = 0; i < t_arg; i++) {
 		AZ(pthread_cond_signal(&wt[i].w.cond));
-		fprintf(stdout, "[INFO] Joining the worker thread\n");
+		if (params->diag_bitmap & 0x4)
+			fprintf(stdout, "[INFO] Joining the worker thread\n");
 		AZ(pthread_join(tp[i], NULL));
 		WRK_Fini(&wt[i].w);
 	}
@@ -2066,6 +2220,7 @@ static const struct parspec input_parspec[] = {
 		"Bitmap controlling diagnostics code:\n"
 		"  0x00000001 - CNT_Session states.\n"
 		"  0x00000002 - socket error messages.\n"
+		"  0x00000004 - thread mgt.\n"
 		"Use 0x notation and do the bitor in your head :-)\n",
 		"0", "bitmap" },
 	{ "read_timeout", tweak_timeout,
@@ -2887,7 +3042,7 @@ main(int argc, char *argv[])
 			t_arg = strtoul(optarg, &end, 10);
 			if (errno == ERANGE || end == optarg || *end) {
 				fprintf(stdout,
-				    "[ERROR] illegal number for -c\n");
+				    "[ERROR] illegal number for -t\n");
 				exit(1);
 			}
 			break;
