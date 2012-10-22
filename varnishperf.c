@@ -194,6 +194,8 @@ enum step {
 struct sess {
 	unsigned		magic;
 #define SESS_MAGIC		0x2c2f9c5a
+	unsigned		flags;
+#define	SESS_F_EOF		(1 << 0)
 	struct worker		*wrk;
 
 	enum step		prevstep;
@@ -918,6 +920,7 @@ retry:
 		sp->step = STP_HTTP_RXRESP_BODY_CHUNKED;
 		return (0);
 	}
+	sp->flags |= SESS_F_EOF;
 	sp->step = STP_HTTP_RXRESP_BODY_EOF;
 	return (0);
 }
@@ -969,10 +972,37 @@ cnt_http_rxresp_body_chunked(struct sess *sp)
 static int
 cnt_http_rxresp_body_eof(struct sess *sp)
 {
+	char buf[64 * 1024];
+	ssize_t l;
 
-	(void)sp;
-	assert(0 == 1);
-	return (-1);
+	while (1) {
+		l = read(sp->fd, buf, sizeof(buf));
+		if (l == -1) {
+			if (l == -1 && errno == EAGAIN) {
+				callout_reset(&sp->wrk->cb, &sp->co,
+				    CALLOUT_SECTOTICKS(params->read_timeout),
+				    cnt_timeout_tick, sp);
+				SES_Wait(sp, SESS_WANT_READ);
+				return (1);
+			}
+			if (isnan(sp->t_bodyend))
+				sp->t_bodyend = TIM_real();
+			SES_errno(errno);
+			if (params->diag_bitmap & 0x2)
+				fprintf(stdout,
+				    "[ERROR] read(2) error: %d %s\n", errno,
+				    strerror(errno));
+			sp->step = STP_HTTP_ERROR;
+			return (0);
+		}
+		if (l == 0)
+			break;
+		sp->roffset += l;
+	}
+	if (isnan(sp->t_bodyend))
+		sp->t_bodyend = TIM_real();
+	sp->step = STP_HTTP_OK;
+	return (0);
 }
 
 static int
@@ -1038,7 +1068,7 @@ cnt_http_ok(struct sess *sp)
 		}
 	}
 skip:
-	if (sp->calls < C_arg) {
+	if ((sp->flags & SESS_F_EOF) == 0 && sp->calls < C_arg) {
 		sp->step = STP_HTTP_TXREQ_INIT;
 		return (0);
 	}
