@@ -69,7 +69,12 @@ struct params {
 	unsigned		connect_timeout;
 	unsigned		read_timeout;
 	unsigned		write_timeout;
-	/* Control diagnostic code */
+	/*
+	 * Bitmap controlling diagnostics code:
+	 *
+	 *   0x00000001 - CNT_Session states.
+	 *   0x00000002 - socket error messages.
+	 */
 	unsigned		diag_bitmap;
 };
 static struct params		_params = {
@@ -315,6 +320,7 @@ static void	SES_Rush(void);
 static int	SES_Schedule(struct sess *sp);
 static void	SES_Sleep(struct sess *sp);
 static void	SES_Wait(struct sess *sp, int want);
+static void	SES_errno(int error);
 static double	TIM_real(void);
 
 /*--------------------------------------------------------------------*/
@@ -495,8 +501,10 @@ cnt_http_start(struct sess *sp)
 	/* XXX doesn't care for IPv6 at all */
 	sp->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (sp->fd == -1) {
-		fprintf(stdout, "[ERROR] socket(2) error: %d %s\n", errno,
-		    strerror(errno));
+		SES_errno(errno);
+		if (params->diag_bitmap & 0x2)
+			fprintf(stdout, "[ERROR] socket(2) error: %d %s\n",
+			    errno, strerror(errno));
 		sp->step = STP_DONE;
 		return (0);
 	}
@@ -531,9 +539,11 @@ cnt_http_wait(struct sess *sp)
 		sip = &srcips[no++ % num_srcips];
 		if (bind(sp->fd, (struct sockaddr *)&sip->sockaddr,
 		    sip->sockaddrlen)) {
-			fprintf(stdout,
-			    "[ERROR] bind(2) with %s error: %d %s\n",
-			    sip->ip, errno, strerror(errno));
+			SES_errno(errno);
+			if (params->diag_bitmap & 0x2)
+				fprintf(stdout,
+				    "[ERROR] bind(2) with %s error: %d %s\n",
+				    sip->ip, errno, strerror(errno));
 			sp->step = STP_HTTP_ERROR;
 			return (0);
 		}
@@ -561,9 +571,11 @@ cnt_http_connect(struct sess *sp)
 		if (errno != EINPROGRESS) {
 			if (isnan(sp->t_connend))
 				sp->t_connend = TIM_real();
-			fprintf(stdout,
-			    "[ERROR] connect(2) error: %d %s\n", errno,
-			    strerror(errno));
+			SES_errno(errno);
+			if (params->diag_bitmap & 0x2)
+				fprintf(stdout,
+				    "[ERROR] connect(2) error: %d %s\n", errno,
+				    strerror(errno));
 			sp->step = STP_HTTP_ERROR;
 			return (0);
 		}
@@ -663,6 +675,7 @@ http_probe_splitheader(struct sess *sp)
 	while (!vct_islws(*p))
 		p++;
 	if (vct_iscrlf(*p)) {
+		VSC_C_main->n_tooearlycrlf++;
 		fprintf(stdout, "[ERROR] too early CRLF after PROTO\n");
 		return (-1);
 	}
@@ -672,6 +685,7 @@ http_probe_splitheader(struct sess *sp)
 	while (vct_issp(*p))		/* XXX: H space only */
 		p++;
 	if (vct_iscrlf(*p)) {
+		VSC_C_main->n_tooearlycrlf++;
 		fprintf(stdout, "[ERROR] too early CRLF after STATUS\n");
 		return (-1);
 	}
@@ -696,12 +710,14 @@ http_probe_splitheader(struct sess *sp)
 		*q = '\0';
 	}
 	if (n != 3) {
+		VSC_C_main->n_wrongstatus++;
 		fprintf(stdout, "[ERROR] wrong status header\n");
 		return (-1);
 	}
 
 	while (*p != '\0') {
 		if (n >= MAXHDR) {
+			VSC_C_main->n_toolonghdr++;
 			fprintf(stdout, "[ERROR] too long headers\n");
 			return (-1);
 		}
@@ -777,14 +793,18 @@ retry:
 		if (isnan(sp->t_fbend))
 			sp->t_fbend = TIM_real();
 		if (l == 0) {
-			fprintf(stdout,
-			    "[ERROR] %s: read(2) error: unexpected EOF"
-			    " (offset %zd)\n", __func__, sp->roffset);
+			SES_errno(0);
+			if (params->diag_bitmap & 0x2)
+				fprintf(stdout,
+				    "[ERROR] %s: read(2) error: unexpected EOF"
+				    " (offset %zd)\n", __func__, sp->roffset);
 			sp->step = STP_HTTP_ERROR;
 			return (0);
 		}
-		fprintf(stdout, "[ERROR] %s: read(2) error: %d %s\n", __func__,
-		    errno, strerror(errno));
+		SES_errno(errno);
+		if (params->diag_bitmap & 0x2)
+			fprintf(stdout, "[ERROR] %s: read(2) error: %d %s\n",
+			    __func__, errno, strerror(errno));
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
@@ -794,7 +814,9 @@ retry:
 	sp->roffset += l;
 	sp->resp[sp->roffset] = '\0';
 	if (sp->roffset >= sizeof(sp->resp)) {
-		fprintf(stdout, "[ERROR] too big header response\n");
+		VSC_C_main->n_toolonghdr++;
+		if (params->diag_bitmap & 0x2)
+			fprintf(stdout, "[ERROR] too big header response\n");
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
@@ -804,7 +826,9 @@ retry:
 	sp->resp[i] = '\0';
 	r = http_probe_splitheader(sp);
 	if (r == -1) {
-		fprintf(stdout, "[ERROR] corrupted response header\n");
+		VSC_C_main->n_wrongres++;
+		if (params->diag_bitmap & 0x2)
+			fprintf(stdout, "[ERROR] corrupted response header\n");
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
@@ -843,8 +867,10 @@ cnt_http_rxresp_body(struct sess *sp)
 		}
 		if (isnan(sp->t_bodyend))
 			sp->t_bodyend = TIM_real();
-		fprintf(stdout, "[ERROR] read(2) error: %d %s\n", errno,
-		    strerror(errno));
+		SES_errno(errno);
+		if (params->diag_bitmap & 0x2)
+			fprintf(stdout, "[ERROR] read(2) error: %d %s\n", errno,
+			    strerror(errno));
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
@@ -1455,6 +1481,20 @@ SES_Sleep(struct sess *sp)
 	Lck_Lock(&waiting_mtx);
 	VTAILQ_INSERT_TAIL(&waiting_list, sp, poollist);
 	Lck_Unlock(&waiting_mtx);
+}
+
+static void
+SES_errno(int error)
+{
+
+	switch (error) {
+	case 0:
+		VSC_C_main->n_eof++;
+		break;
+	default:
+		fprintf(stderr, "[ERROR] Unexpected error number: %d\n", error);
+		break;
+	}
 }
 
 /*--------------------------------------------------------------------*/
