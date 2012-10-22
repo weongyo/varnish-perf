@@ -1,3 +1,4 @@
+<pre>
 Varnish-perf
 ============
 
@@ -27,15 +28,12 @@ How to compile
 1. Download thr Varnish-perf from official site (Github).
 2. Untar the file and compile as belows:
 
-<pre>
     # make depend
     # make
-</pre>
 
 How to use
 ==========
 
-<pre>
     # ./varnishperf
     [ERROR] No URLs found.
     [INFO] usage: varnishperf [options] urlfile
@@ -43,7 +41,6 @@ How to use
     [INFO]    -m N                         # Limits concurrent TCP connections
     [INFO]    -r N                         # Sets rate
     [INFO]    -s file                      # Sets file path containing src IP
-</pre>
 
 Each options indicate:
 
@@ -195,7 +192,6 @@ url -connect "www.google.com:80" -url "/" -req "POST" -proto "HTTP/1.0" \
 Examples
 ========
 
-<pre>
 [root@localhost varnish-perf]# /sbin/ifconfig
 eth0      Link encap:Ethernet  HWaddr 00:15:17:D2:EB:0A  
           inet addr:172.18.14.2  Bcast:172.18.255.255  Mask:255.255.0.0
@@ -253,7 +249,6 @@ url -connect "172.18.14.1:8080" -url "/1b" -hdr "Connection: close"
 [STAT]    606.957768           seconds    c # Total time used for connect(2)
 [STAT]    367.215323           seconds    c # Total time used for waiting the first byte after sending HTTP request
 [STAT]    5.044619             seconds    c # Total time used for receiving the body
-</pre>
 
 Supported OS
 ============
@@ -269,4 +264,4 @@ Author
 ======
 
 * Weongyo Jeong - weongyo@gmail.com
-
+</pre>
