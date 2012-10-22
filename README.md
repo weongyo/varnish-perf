@@ -41,11 +41,11 @@ How to use
     [INFO] Set Default for write_timeout = 6
     [ERROR] No URLs found.
     [INFO] usage: varnishperf [options] urlfile
-    [INFO]    -c N                         # Sets number of threads
     [INFO]    -m N                         # Limits concurrent TCP connections
     [INFO]    -p param=value               # set parameter
     [INFO]    -r N                         # Sets rate
     [INFO]    -s file                      # Sets file path containing src IP
+    [INFO]    -t N                         # Sets number of threads
     [INFO]    -z                           # Shows all statistic fields
 
 Each options indicate:
@@ -218,7 +218,7 @@ url -connect "172.18.14.1:8080" -url "/1b" -hdr "Connection: close"
 [root@localhost varnish-perf]# cat srcips 
 172.18.14.2
 172.18.14.3
-[root@localhost varnish-perf]# ./varnishperf -s srcips -c 1 -m 300 -r 30000 ./urls
+[root@localhost varnish-perf]# ./varnishperf -s srcips -t 1 -m 300 -r 30000 ./urls
 [INFO] Reading "srcips" SRCIP file.
 [INFO] Total 2 SRCIP are loaded from "srcips" file.
 [INFO] Reading ./urls URL file.
