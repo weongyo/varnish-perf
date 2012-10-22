@@ -1581,44 +1581,44 @@ SCH_stat(void)
 	fprintf(stdout, " | %5jd", VSC_C_main->n_conn);
 
 	if (VSC_C_1s->t_connmin == 1000.0)
-		fprintf(stdout, " |   na");
+		fprintf(stdout, " |    na");
 	else
 		fprintf(stdout, " | %2.3f", VSC_C_1s->t_connmin);
 	if (VSC_C_1s->n_conn == 0)
-		fprintf(stdout, " /   na");
+		fprintf(stdout, " /    na");
 	else
 		fprintf(stdout, " / %2.3f",
 		    VSC_C_1s->t_conntotal / VSC_C_1s->n_conn);
 	if (VSC_C_1s->t_connmax == -1.0)
-		fprintf(stdout, " /   na");
+		fprintf(stdout, " /    na");
 	else
 		fprintf(stdout, " / %2.3f", VSC_C_1s->t_connmax);
 
 	if (VSC_C_1s->t_fbmin == 1000.0)
-		fprintf(stdout, " |   na");
+		fprintf(stdout, " |    na");
 	else
 		fprintf(stdout, " | %2.3f", VSC_C_1s->t_fbmin);
 	if (VSC_C_1s->n_fb == 0)
-		fprintf(stdout, " /   na");
+		fprintf(stdout, " /    na");
 	else
 		fprintf(stdout, " / %2.3f",
 		    VSC_C_1s->t_fbtotal / VSC_C_1s->n_fb);
 	if (VSC_C_1s->t_fbmax == -1.0)
-		fprintf(stdout, " /   na");
+		fprintf(stdout, " /    na");
 	else
 		fprintf(stdout, " / %2.3f", VSC_C_1s->t_fbmax);
 
 	if (VSC_C_1s->t_bodymin == 1000.0)
-		fprintf(stdout, " |   na");
+		fprintf(stdout, " |    na");
 	else
 		fprintf(stdout, " | %2.3f", VSC_C_1s->t_bodymin);
 	if (VSC_C_1s->n_body == 0)
-		fprintf(stdout, " /   na");
+		fprintf(stdout, " /    na");
 	else
 		fprintf(stdout, " / %2.3f",
 		    VSC_C_1s->t_bodytotal / VSC_C_1s->n_body);
 	if (VSC_C_1s->t_bodymax == -1.0)
-		fprintf(stdout, " /   na");
+		fprintf(stdout, " /    na");
 	else
 		fprintf(stdout, " / %2.3f", VSC_C_1s->t_bodymax);
 
