@@ -1501,6 +1501,12 @@ SES_errno(int error)
 	case 0:
 		VSC_C_main->n_eof++;
 		break;
+	case ECONNREFUSED:
+		VSC_C_main->n_econnrefused++;
+		break;
+	case ECONNRESET:
+		VSC_C_main->n_econnreset++;
+		break;
 	default:
 		fprintf(stderr, "[ERROR] Unexpected error number: %d\n", error);
 		break;
@@ -1626,7 +1632,8 @@ SCH_stat(void)
 	    (int64_t)(VSC_C_main->n_rxbytes - prev.n_rxbytes), "",
 	    HN_AUTOSCALE, HN_NOSPACE | HN_DECIMAL);
  	fprintf(stdout, " | %5s", sbuf);
-	fprintf(stdout, " | %jd\n", VSC_C_main->n_timeout);
+	fprintf(stdout, " | %jd / %jd\n", VSC_C_main->n_timeout,
+	    VSC_C_main->n_econnreset);
 
 	/* Reset and Prepare */
 	prev = *VSC_C_main;
