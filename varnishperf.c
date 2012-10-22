@@ -293,6 +293,11 @@ static int	m_arg = 0;
  */
 static int	r_arg = 1;
 /*
+ * Shows all statistic fields.  If stat value is zero, default behaviour is
+ * that it'd not be shown.
+ */
+static int	z_arg = 0;
+/*
  * Boot-up time from TIM_real().
  */
 static double	boottime;
@@ -1616,10 +1621,16 @@ Errors: closednoresp 0 sslerror 0 sslerror_syscall 0 other 0
 	fprintf(stdout, "[STAT] Summary:\n");
 #define FMT_u64 "[STAT]    %-20ju %-10s %c # %s\n"
 #define FMT_dbl "[STAT]    %-20f %-10s %c # %s\n"
-#define	PERFSTAT_u64(a, b, c, d)	\
-	fprintf(stdout, FMT_u64, VSC_C_main->a, d, b, c);
-#define	PERFSTAT_dbl(a, b, c, d)	\
-	fprintf(stdout, FMT_dbl, VSC_C_main->a, d, b, c);
+#define	PERFSTAT_u64(a, b, c, d)	do {				\
+	if (z_arg == 0 && VSC_C_main->a == 0)				\
+		break;							\
+	fprintf(stdout, FMT_u64, VSC_C_main->a, d, b, c);		\
+} while (0);
+#define	PERFSTAT_dbl(a, b, c, d)	do {				\
+	if (z_arg == 0 && VSC_C_main->a == 0.)				\
+		break;							\
+	fprintf(stdout, FMT_dbl, VSC_C_main->a, d, b, c);		\
+} while (0);
 #include "stats.h"
 #undef PERFSTAT
 #undef FMT_dbl
@@ -2429,6 +2440,7 @@ usage(void)
 	fprintf(stderr, FMT, "-m N", "Limits concurrent TCP connections");
 	fprintf(stderr, FMT, "-r N", "Sets rate");
 	fprintf(stderr, FMT, "-s file", "Sets file path containing src IP");
+	fprintf(stderr, FMT, "-z", "Shows all statistic fields");
 	exit(1);
 }
 

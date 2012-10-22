@@ -75,6 +75,11 @@ Each options indicate:
   If -s option isn't set, OS'll select its source IP of packets
   automatically.
 
+* -z
+
+  Shows all statistic fields.  If stat value is zero, default behaviour is
+  that it'd not be shown.
+
 URL file syntax
 ===============
 
