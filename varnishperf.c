@@ -311,7 +311,7 @@ static int	r_arg = 1;
  * Shows all statistic fields.  If stat value is zero, default behaviour is
  * that it'd not be shown.
  */
-static int	z_arg = 0;
+static int	z_flag = 0;
 /*
  * Boot-up time from TIM_real().
  */
@@ -1681,12 +1681,12 @@ Errors: closednoresp 0 sslerror 0 sslerror_syscall 0 other 0
 #define FMT_u64 "[STAT]    %-20ju %-10s %c # %s\n"
 #define FMT_dbl "[STAT]    %-20f %-10s %c # %s\n"
 #define	PERFSTAT_u64(a, b, c, d)	do {				\
-	if (z_arg == 0 && VSC_C_main->a == 0)				\
+	if (z_flag == 0 && VSC_C_main->a == 0)				\
 		break;							\
 	fprintf(stdout, FMT_u64, VSC_C_main->a, d, b, c);		\
 } while (0);
 #define	PERFSTAT_dbl(a, b, c, d)	do {				\
-	if (z_arg == 0 && VSC_C_main->a == 0.)				\
+	if (z_flag == 0 && VSC_C_main->a == 0.)				\
 		break;							\
 	fprintf(stdout, FMT_dbl, VSC_C_main->a, d, b, c);		\
 } while (0);
@@ -2679,7 +2679,7 @@ main(int argc, char *argv[])
 
 	MCF_ParamInit();
 
-	while ((ch = getopt(argc, argv, "c:m:r:s:")) != -1) {
+	while ((ch = getopt(argc, argv, "c:m:p:r:s:z")) != -1) {
 		switch (ch) {
 		case 'c':
 			errno = 0;
@@ -2718,6 +2718,9 @@ main(int argc, char *argv[])
 			break;
 		case 's':
 			s_arg = optarg;
+			break;
+		case 'z':
+			z_flag = 1 - z_flag;
 			break;
 		default:
 			usage();
