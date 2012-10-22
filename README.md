@@ -60,6 +60,44 @@ Each options indicate:
 
   Default value is 0 indicating unlimited.
 
+* -p param=value
+
+  * Sets the parameters used to control varnishperf's behaviours.  Folleing
+    parameters are supported:
+
+    * connect_timeout=N
+
+      Default connection timeout for backend connections.
+      We only try to connect to the backend for this many
+      seconds before giving up. 
+
+      Default value is 3 seconds.
+
+    * diag_bitmap=N
+
+      Bitmap controlling diagnostics code:
+
+      * 0x00000001 - CNT_Session states.
+      * 0x00000002 - socket error messages.
+
+      Default value is 0.
+
+    * read_timeout=N
+
+      Default timeout for receiving bytes from target.
+      We only wait for this many seconds for bytes
+      before giving up.
+
+      Default value is 6 seconds.
+
+    * write_timeout=N
+
+      Send timeout for client connections.
+      If the HTTP response hasn't been transmitted in this many
+      seconds the session is closed.
+
+      Default value is 6 seconds.
+
 * -r N
 
   Indicates the rate.  For example, if -r 1000, there will be 1000 requests

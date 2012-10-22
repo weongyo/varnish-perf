@@ -1907,7 +1907,7 @@ static const struct parspec input_parspec[] = {
 		"Default connection timeout for backend connections. "
 		"We only try to connect to the backend for this many "
 		"seconds before giving up. ",
-		"3", "s" },
+		"3", "seconds" },
 	{ "diag_bitmap", tweak_diag_bitmap, 0, 0, 0,
 		"Bitmap controlling diagnostics code:\n"
 		"  0x00000001 - CNT_Session states.\n"
@@ -1916,10 +1916,10 @@ static const struct parspec input_parspec[] = {
 		"0", "bitmap" },
 	{ "read_timeout", tweak_timeout,
 		&master.read_timeout, 1, UINT_MAX,
-		"Default timeout for receiving bytes from backend. "
+		"Default timeout for receiving bytes from target. "
 		"We only wait for this many seconds for bytes "
 		"before giving up.",
-		"6", "s" },
+		"6", "seconds" },
 	{ "write_timeout", tweak_timeout, &master.write_timeout, 0, 0,
 		"Send timeout for client connections. "
 		"If the HTTP response hasn't been transmitted in this many\n"
@@ -2656,6 +2656,7 @@ usage(void)
 #define FMT "[INFO]    %-28s # %s\n"
 	fprintf(stdout, FMT, "-c N", "Sets number of threads");
 	fprintf(stdout, FMT, "-m N", "Limits concurrent TCP connections");
+	fprintf(stderr, FMT, "-p param=value", "set parameter");
 	fprintf(stdout, FMT, "-r N", "Sets rate");
 	fprintf(stdout, FMT, "-s file", "Sets file path containing src IP");
 	fprintf(stdout, FMT, "-z", "Shows all statistic fields");
