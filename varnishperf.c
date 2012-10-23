@@ -550,6 +550,28 @@ WS_Init(struct ws *ws, const char *id, void *space, unsigned len)
 	WS_Assert(ws);
 }
 
+/*
+ * Reset a WS to start or a given pointer, likely from WS_Snapshot
+ */
+
+static void
+WS_Reset(struct ws *ws, char *p)
+{
+
+	WS_Assert(ws);
+	if (params->diag_bitmap & 0x8)
+		fprintf(stdout, "WS_Reset(%p, %p)", ws, p);
+	assert(ws->r == NULL);
+	if (p == NULL)
+		ws->f = ws->s;
+	else {
+		assert(p >= ws->s);
+		assert(p < ws->e);
+		ws->f = p;
+	}
+	WS_Assert(ws);
+}
+
 /*--------------------------------------------------------------------*/
 
 static inline int
@@ -998,6 +1020,7 @@ cnt_http_txreq_init(struct sess *sp)
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
+	WS_Reset(sp->ws, NULL);
 	sp->woffset = 0;
 	sp->step = STP_HTTP_TXREQ;
 	return (0);
