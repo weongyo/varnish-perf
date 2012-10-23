@@ -1522,7 +1522,7 @@ cnt_http_ok(struct sess *sp)
 		}
 	}
 skip:
-	if ((sp->flags & SESS_F_EOF) == 0 && sp->calls < C_arg) {
+	if ((sp->flags & SESS_F_EOF) == 0 && sp->calls < C_arg && !stop) {
 		sp->step = STP_HTTP_TXREQ_INIT;
 		return (0);
 	}
