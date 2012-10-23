@@ -42,6 +42,7 @@ How to use
     [ERROR] No URLs found.
     [INFO] usage: varnishperf [options] urlfile
     [INFO]    -c N                         # Limits total TCP connections
+    [INFO]    -C N                         # Sets request number per a conn
     [INFO]    -m N                         # Limits concurrent TCP connections
     [INFO]    -p param=value               # set parameter
     [INFO]    -r N                         # Sets rate
@@ -58,6 +59,12 @@ Each options indicate:
   gracefully.
 
   Default value is 0.
+
+* -C N
+
+  Sets the number of requests per a connection.
+
+  Default value is 1 request per a connection.
 
 * -m N
 
