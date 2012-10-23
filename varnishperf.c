@@ -1239,17 +1239,20 @@ retry:
 		sp->cl = strtoul(p, &end, 0);
 		if (errno == ERANGE || end == p || *end)
 			assert(0 == 1);
+		VSC_C_main->n_resstraight++;
 		sp->step = STP_HTTP_RXRESP_CL;
 		return (0);
 	}
 	p = http_find_header(sp->resphdr, "Transfer-Encoding");
 	if (p != NULL && !strcmp(p, "chunked")) {
+		VSC_C_main->n_reschunked++;
 		sp->nobuf = WS_Alloc(sp->ws, SESS_NOBUFSIZ);
 		AN(sp->nobuf);
 		sp->nooffset = 0;
 		sp->step = STP_HTTP_RXRESP_CHUNKED_INIT;
 		return (0);
 	}
+	VSC_C_main->n_reseof++;
 	sp->flags |= SESS_F_EOF;
 	sp->step = STP_HTTP_RXRESP_EOF;
 	return (0);

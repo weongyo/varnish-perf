@@ -43,6 +43,12 @@ PERFSTAT_dbl(t_fbtotal,		'c', "Total time used for waiting"
 PERFSTAT_dbl(t_bodytotal,	'c', "Total time used for receiving the body",
 				     "seconds")
 
+PERFSTAT_u64(n_resstraight,	'c', "straight response with Content-Length",
+				     "times")
+PERFSTAT_u64(n_reschunked,	'c', "chunked response with Transfer-Encoding",
+				     "times")
+PERFSTAT_u64(n_reseof,		'c', "eof-style response", "times")
+
 /* Response status */
 PERFSTAT_u64(n_status_0xx,	'c', "HTTP response status for 0XX", "times")
 PERFSTAT_u64(n_status_1xx,	'c', "HTTP response status for 1XX", "times")
