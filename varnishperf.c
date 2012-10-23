@@ -1041,8 +1041,10 @@ cnt_http_txreq(struct sess *sp)
 	if (l <= 0) {
 		if (l == -1 && errno == EAGAIN)
 			goto wantwrite;
-		fprintf(stdout,
-		    "write(2) error: %d %s\n", errno, strerror(errno));
+		SES_errno(errno);
+		if (params->diag_bitmap & 0x2)
+			fprintf(stdout,
+			    "write(2) error: %d %s\n", errno, strerror(errno));
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
