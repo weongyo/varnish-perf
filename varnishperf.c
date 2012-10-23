@@ -265,7 +265,10 @@ struct sess {
 	ssize_t			roffset;
 	ssize_t			woffset;
 	struct http_conn	htc;
-	char			*clbuf;		/* For chunked-encoding */
+#define	SESS_NOBUFSIZ		32
+	char			*nobuf;		/* For chunked-encoding */
+	ssize_t			nooffset;
+	ssize_t			no;
 	struct ws		ws[1];
 #define	WSBUFMAX		(8 * 1024)
 	char			_wsbuf[WSBUFMAX];
@@ -705,6 +708,7 @@ HTC_Complete(struct http_conn *htc)
 	assert(i >= 0);
 	if (i == 0)
 		return (0);
+	WS_ReleaseP(htc->ws, htc->rxbuf.e);
 	AZ(htc->pipeline.b);
 	AZ(htc->pipeline.e);
 	if (htc->rxbuf.b + i < htc->rxbuf.e) {
@@ -816,9 +820,11 @@ cnt_timeout(struct sess *sp)
 			sp->t_fbend = TIM_real();
 		sp->step = STP_HTTP_ERROR;
 		break;
-	case STP_HTTP_RXRESP_BODY_CL:
-	case STP_HTTP_RXRESP_BODY_CHUNKED:
-	case STP_HTTP_RXRESP_BODY_EOF:
+	case STP_HTTP_RXRESP_CL:
+	case STP_HTTP_RXRESP_CHUNKED_NO:
+	case STP_HTTP_RXRESP_CHUNKED_BODY:
+	case STP_HTTP_RXRESP_CHUNKED_TAIL:
+	case STP_HTTP_RXRESP_EOF:
 		if (isnan(sp->t_bodyend))
 			sp->t_bodyend = TIM_real();
 		sp->step = STP_HTTP_ERROR;
@@ -1210,29 +1216,31 @@ retry:
 		sp->cl = strtoul(p, &end, 0);
 		if (errno == ERANGE || end == p || *end)
 			assert(0 == 1);
-		sp->step = STP_HTTP_RXRESP_BODY_CL;
+		sp->step = STP_HTTP_RXRESP_CL;
 		return (0);
 	}
 	p = http_find_header(sp->resphdr, "Transfer-Encoding");
 	if (p != NULL && !strcmp(p, "chunked")) {
-		sp->clbuf = WS_Alloc(sp->ws, 32);
-		AN(sp->clbuf);
-		sp->step = STP_HTTP_RXRESP_BODY_CHUNKED;
+		sp->nobuf = WS_Alloc(sp->ws, SESS_NOBUFSIZ);
+		AN(sp->nobuf);
+		sp->nooffset = 0;
+		sp->step = STP_HTTP_RXRESP_CHUNKED_INIT;
 		return (0);
 	}
 	sp->flags |= SESS_F_EOF;
-	sp->step = STP_HTTP_RXRESP_BODY_EOF;
+	sp->step = STP_HTTP_RXRESP_EOF;
 	return (0);
 }
 
 static int
-cnt_http_rxresp_body_cl(struct sess *sp)
+cnt_http_rxresp_cl(struct sess *sp)
 {
 	char buf[64 * 1024];
 	ssize_t l;
 
 	while (sp->roffset < sp->cl) {
-		l = HTC_Read(&sp->htc, buf, sizeof(buf));
+		l = HTC_Read(&sp->htc, buf,
+		    MIN(sizeof(buf), sp->cl - sp->roffset));
 		if (l == -1) {
 			if (l == -1 && errno == EAGAIN) {
 				callout_reset(&sp->wrk->cb, &sp->co,
@@ -1261,16 +1269,136 @@ cnt_http_rxresp_body_cl(struct sess *sp)
 }
 
 static int
-cnt_http_rxresp_body_chunked(struct sess *sp)
+cnt_http_rxresp_chunked_init(struct sess *sp)
 {
 
-	(void)sp;
-	assert(0 == 1);
+	AN(sp->nobuf);
+	sp->nooffset = 0;
+	sp->step = STP_HTTP_RXRESP_CHUNKED_NO;
 	return (0);
 }
 
 static int
-cnt_http_rxresp_body_eof(struct sess *sp)
+cnt_http_rxresp_chunked_no(struct sess *sp)
+{
+	ssize_t l;
+	char *end;
+
+retry:
+	l = HTC_Read(&sp->htc, sp->nobuf + sp->nooffset, 1);
+	if (l == -1) {
+		if (l == -1 && errno == EAGAIN) {
+			callout_reset(&sp->wrk->cb, &sp->co,
+			    CALLOUT_SECTOTICKS(params->read_timeout),
+			    cnt_timeout_tick, sp);
+			SES_Wait(sp, SESS_WANT_READ);
+			return (1);
+		}
+		if (isnan(sp->t_bodyend))
+			sp->t_bodyend = TIM_real();
+		SES_errno(errno);
+		if (params->diag_bitmap & 0x2)
+			fprintf(stdout,
+			    "[ERROR] read(2) error: %d %s\n", errno,
+			    strerror(errno));
+		sp->step = STP_HTTP_ERROR;
+		return (0);
+	}
+	assert(l == 1);
+	sp->nooffset += l;
+	assert(sp->nooffset < SESS_NOBUFSIZ);
+	sp->nobuf[sp->nooffset] = '\0';
+	if (sp->nobuf[sp->nooffset - 1] != '\n')
+		goto retry;
+	errno = 0;
+	sp->no = strtoul(sp->nobuf, &end, 16);
+	if (errno == ERANGE || end == sp->nobuf)
+		assert(0 == 1);
+	sp->nooffset = 0;
+	sp->step = STP_HTTP_RXRESP_CHUNKED_BODY;
+	return (0);
+}
+
+static int
+cnt_http_rxresp_chunked_body(struct sess *sp)
+{
+	char buf[64 * 1024];
+	ssize_t l;
+
+	while (sp->nooffset < sp->no) {
+		l = HTC_Read(&sp->htc, buf,
+		    MIN(sizeof(buf), sp->no - sp->nooffset));
+		if (l == -1) {
+			if (l == -1 && errno == EAGAIN) {
+				callout_reset(&sp->wrk->cb, &sp->co,
+				    CALLOUT_SECTOTICKS(params->read_timeout),
+				    cnt_timeout_tick, sp);
+				SES_Wait(sp, SESS_WANT_READ);
+				return (1);
+			}
+			if (isnan(sp->t_bodyend))
+				sp->t_bodyend = TIM_real();
+			SES_errno(errno);
+			if (params->diag_bitmap & 0x2)
+				fprintf(stdout,
+				    "[ERROR] read(2) error: %d %s\n", errno,
+				    strerror(errno));
+			sp->step = STP_HTTP_ERROR;
+			return (0);
+		}
+		sp->nooffset += l;
+		assert(sp->nooffset <= sp->no);
+	}
+	assert(sp->nooffset == sp->no);
+	sp->nooffset = 0;
+	sp->step = STP_HTTP_RXRESP_CHUNKED_TAIL;
+	return (0);
+}
+
+static int
+cnt_http_rxresp_chunked_tail(struct sess *sp)
+{
+	ssize_t l;
+
+retry:
+	l = HTC_Read(&sp->htc, sp->nobuf + sp->nooffset, 1);
+	if (l == -1) {
+		if (l == -1 && errno == EAGAIN) {
+			callout_reset(&sp->wrk->cb, &sp->co,
+			    CALLOUT_SECTOTICKS(params->read_timeout),
+			    cnt_timeout_tick, sp);
+			SES_Wait(sp, SESS_WANT_READ);
+			return (1);
+		}
+		if (isnan(sp->t_bodyend))
+			sp->t_bodyend = TIM_real();
+		SES_errno(errno);
+		if (params->diag_bitmap & 0x2)
+			fprintf(stdout,
+			    "[ERROR] read(2) error: %d %s\n", errno,
+			    strerror(errno));
+		sp->step = STP_HTTP_ERROR;
+		return (0);
+	}
+	assert(l == 1);
+	sp->nooffset += l;
+	assert(sp->nooffset < SESS_NOBUFSIZ);
+	sp->nobuf[sp->nooffset] = '\0';
+	if (sp->nooffset != 2)
+		goto retry;
+	assert(sp->nooffset <= 2);
+	if (sp->no != 0) {
+		sp->step = STP_HTTP_RXRESP_CHUNKED_INIT;
+		return (0);
+	}
+	if (isnan(sp->t_bodyend))
+		sp->t_bodyend = TIM_real();
+	sp->step = STP_HTTP_OK;
+	return (0);
+}
+
+static int
+cnt_http_rxresp_eof(struct sess *sp)
 {
 	char buf[64 * 1024];
 	ssize_t l;
