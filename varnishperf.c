@@ -803,9 +803,9 @@ HTC_Read(struct http_conn *htc, void *d, size_t len)
 	if (len == 0)
 		return (l);
 	i = read(htc->fd, p, len);
-	if (i < 0) {
+	if (i < 0)
 		return (i);
-	}
+	VSC_C_main->n_rxbytes += i;
 	return (i + l);
 }
 
