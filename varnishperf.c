@@ -845,7 +845,7 @@ cnt_timeout(struct sess *sp)
 	case STP_HTTP_RXRESP_CL:
 	case STP_HTTP_RXRESP_CHUNKED_NO:
 	case STP_HTTP_RXRESP_CHUNKED_BODY:
-	case STP_HTTP_RXRESP_CHUNKED_TAIL:
+	case STP_HTTP_RXRESP_CHUNKED_CRLF:
 	case STP_HTTP_RXRESP_EOF:
 		if (isnan(sp->t_bodyend))
 			sp->t_bodyend = TIM_real();
@@ -1377,12 +1377,12 @@ cnt_http_rxresp_chunked_body(struct sess *sp)
 	}
 	assert(sp->nooffset == sp->no);
 	sp->nooffset = 0;
-	sp->step = STP_HTTP_RXRESP_CHUNKED_TAIL;
+	sp->step = STP_HTTP_RXRESP_CHUNKED_CRLF;
 	return (0);
 }
 
 static int
-cnt_http_rxresp_chunked_tail(struct sess *sp)
+cnt_http_rxresp_chunked_crlf(struct sess *sp)
 {
 	ssize_t l;
 
