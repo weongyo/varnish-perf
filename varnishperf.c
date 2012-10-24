@@ -31,6 +31,7 @@
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -93,6 +94,8 @@ struct params {
 	unsigned		write_timeout;
 
 	unsigned		diag_bitmap;
+
+	unsigned		linger;
 };
 static struct params		master;
 static struct params		*params;
@@ -914,11 +917,21 @@ cnt_http_start(struct sess *sp)
 	return (0);
 }
 
+/*--------------------------------------------------------------------
+ * We want to get out of any kind of trouble-hit TCP connections as fast
+ * as absolutely possible, so we set them LINGER enabled with zero timeout,
+ * so that even if there are outstanding write data on the socket, a close(2)
+ * will return immediately.
+ */
+static const struct linger linger = {
+	.l_onoff	=	0,
+};
+
 static int
 cnt_http_wait(struct sess *sp)
 {
 	struct srcip *sip;
-	int ret;
+	int ret, val = 1;
 	static int no = 0;
 
 	Lck_Lock(&ses_stat_mtx);
@@ -936,6 +949,11 @@ cnt_http_wait(struct sess *sp)
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
+	if (params->linger)
+		AZ(setsockopt(sp->fd, SOL_SOCKET, SO_LINGER, &linger,
+			sizeof linger));
+	/* Disable Nagle algorithm for pipelining requests.  */
+        AZ(setsockopt(sp->fd, SOL_TCP, TCP_NODELAY, &val, sizeof(val)));
 	if (num_srcips > 0) {
 		/* Try a source IP address in round-robin manner. */
 		sip = &srcips[no++ % num_srcips];
@@ -2522,6 +2540,47 @@ tweak_timeout(const struct parspec *par, const char *arg)
 
 /*--------------------------------------------------------------------*/
 
+static void
+tweak_generic_bool(volatile unsigned *dest, const char *arg)
+{
+	if (arg != NULL) {
+		if (!strcasecmp(arg, "off"))
+			*dest = 0;
+		else if (!strcasecmp(arg, "disable"))
+			*dest = 0;
+		else if (!strcasecmp(arg, "no"))
+			*dest = 0;
+		else if (!strcasecmp(arg, "false"))
+			*dest = 0;
+		else if (!strcasecmp(arg, "on"))
+			*dest = 1;
+		else if (!strcasecmp(arg, "enable"))
+			*dest = 1;
+		else if (!strcasecmp(arg, "yes"))
+			*dest = 1;
+		else if (!strcasecmp(arg, "true"))
+			*dest = 1;
+		else {
+			fprintf(stdout, "[ERROR] use \"on\" or \"off\"\n");
+			exit(2);
+		}
+	} else
+		fprintf(stdout, "%s", *dest ? "on" : "off");
+}
+
+/*--------------------------------------------------------------------*/
+
+static void
+tweak_bool(const struct parspec *par, const char *arg)
+{
+	volatile unsigned *dest;
+
+	dest = par->priv;
+	tweak_generic_bool(dest, arg);
+}
+
+/*--------------------------------------------------------------------*/
+
 static const struct parspec input_parspec[] = {
 	{ "connect_timeout", tweak_timeout,
 		&master.connect_timeout, 0, UINT_MAX,
@@ -2537,6 +2596,9 @@ static const struct parspec input_parspec[] = {
 		"  0x00000008 - workspace.\n"
 		"Use 0x notation and do the bitor in your head :-)\n",
 		"0", "bitmap" },
+	{ "linger", tweak_bool, &master.linger, 0, 0,
+		"Sets the linger.",
+		"off", "bool" },
 	{ "read_timeout", tweak_timeout,
 		&master.read_timeout, 1, UINT_MAX,
 		"Default timeout for receiving bytes from target. "
