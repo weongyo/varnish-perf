@@ -2118,19 +2118,19 @@ SCH_hdr(void)
 
 	/* XXX WG: I'm sure you didn't use your brain. */
 	fprintf(stdout, "[STAT] "
-	    " time    | total    | req   | conn  |"
+	    " time    | total    | req   | conn           |"
 	    " connect time          |"
 	    " first byte time       |"
 	    " body time             |"
 	    " tx         | tx    | rx         | rx    | errors\n");
 	fprintf(stdout, "[STAT] "
-	    "         |          |       |       |"
+	    "         |          |       | active   total |"
 	    "   min     avg     max |"
 	    "   min     avg     max |"
 	    "   min     avg     max |"
 	    "            |       |            |       |\n");
 	fprintf(stdout, "[STAT] "
-	    "---------+----------+-------+-------+"
+	    "---------+----------+-------+----------------+"
 	    "-----------------------+"
 	    "-----------------------+"
 	    "-----------------------+"
@@ -2143,7 +2143,7 @@ SCH_bottom(void)
 
 	/* XXX WG: I'm sure you didn't use your brain. */
 	fprintf(stdout, "[STAT] "
-	    "---------+----------+-------+-------+"
+	    "---------+----------+-------+----------------+"
 	    "-----------------------+"
 	    "-----------------------+"
 	    "-----------------------+"
@@ -2167,7 +2167,8 @@ SCH_stat(void)
 	fprintf(stdout, "[STAT] %s", buf);
 	fprintf(stdout, " | %8jd", VSC_C_main->n_req);
 	fprintf(stdout, " | %5jd", VSC_C_main->n_req - prev.n_req);
-	fprintf(stdout, " | %5jd", VSC_C_main->n_conn);
+	fprintf(stdout, " | %5jd / %6jd", VSC_C_main->n_conn,
+	    VSC_C_main->n_conntotal - prev.n_conntotal);
 
 	if (VSC_C_1s->t_connmin == 1000.0)
 		fprintf(stdout, " |    na");
@@ -2635,7 +2636,7 @@ read_file(const char *fn)
 		free(buf);
 		return (NULL);
 	}
-	AZ(close (fd));
+	AZ(close(fd));
 	assert(s < sz);		/* XXX: increase MAX_FILESIZE */
 	buf[s] = '\0';
 	buf = realloc(buf, s + 1);
