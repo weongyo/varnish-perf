@@ -31,6 +31,7 @@
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -93,6 +94,8 @@ struct params {
 	unsigned		write_timeout;
 
 	unsigned		diag_bitmap;
+
+	unsigned		linger;
 };
 static struct params		master;
 static struct params		*params;
@@ -820,7 +823,7 @@ cnt_timeout(struct sess *sp)
 	case STP_HTTP_RXRESP_CL:
 	case STP_HTTP_RXRESP_CHUNKED_NO:
 	case STP_HTTP_RXRESP_CHUNKED_BODY:
-	case STP_HTTP_RXRESP_CHUNKED_TAIL:
+	case STP_HTTP_RXRESP_CHUNKED_CRLF:
 	case STP_HTTP_RXRESP_EOF:
 		if (isnan(sp->t_bodyend))
 			sp->t_bodyend = TIM_real();
@@ -889,11 +892,21 @@ cnt_http_start(struct sess *sp)
 	return (0);
 }
 
+/*--------------------------------------------------------------------
+ * We want to get out of any kind of trouble-hit TCP connections as fast
+ * as absolutely possible, so we set them LINGER enabled with zero timeout,
+ * so that even if there are outstanding write data on the socket, a close(2)
+ * will return immediately.
+ */
+static const struct linger linger = {
+	.l_onoff	=	0,
+};
+
 static int
 cnt_http_wait(struct sess *sp)
 {
 	struct srcip *sip;
-	int ret;
+	int ret, val = 1;
 	static int no = 0;
 
 	Lck_Lock(&ses_stat_mtx);
@@ -911,6 +924,11 @@ cnt_http_wait(struct sess *sp)
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
+	if (params->linger)
+		AZ(setsockopt(sp->fd, SOL_SOCKET, SO_LINGER, &linger,
+			sizeof linger));
+	/* Disable Nagle algorithm for pipelining requests.  */
+        AZ(setsockopt(sp->fd, SOL_TCP, TCP_NODELAY, &val, sizeof(val)));
 	if (num_srcips > 0) {
 		/* Try a source IP address in round-robin manner. */
 		sip = &srcips[no++ % num_srcips];
@@ -1016,8 +1034,10 @@ cnt_http_txreq(struct sess *sp)
 	if (l <= 0) {
 		if (l == -1 && errno == EAGAIN)
 			goto wantwrite;
-		fprintf(stdout,
-		    "write(2) error: %d %s\n", errno, strerror(errno));
+		SES_errno(errno);
+		if (params->diag_bitmap & 0x2)
+			fprintf(stdout,
+			    "write(2) error: %d %s\n", errno, strerror(errno));
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
@@ -1352,12 +1372,12 @@ cnt_http_rxresp_chunked_body(struct sess *sp)
 	}
 	assert(sp->nooffset == sp->no);
 	sp->nooffset = 0;
-	sp->step = STP_HTTP_RXRESP_CHUNKED_TAIL;
+	sp->step = STP_HTTP_RXRESP_CHUNKED_CRLF;
 	return (0);
 }
 
 static int
-cnt_http_rxresp_chunked_tail(struct sess *sp)
+cnt_http_rxresp_chunked_crlf(struct sess *sp)
 {
 	ssize_t l;
 
@@ -1497,7 +1517,7 @@ cnt_http_ok(struct sess *sp)
 		}
 	}
 skip:
-	if ((sp->flags & SESS_F_EOF) == 0 && sp->calls < C_arg) {
+	if ((sp->flags & SESS_F_EOF) == 0 && sp->calls < C_arg && !stop) {
 		sp->step = STP_HTTP_TXREQ_INIT;
 		return (0);
 	}
@@ -2048,19 +2068,19 @@ SCH_hdr(void)
 
 	/* XXX WG: I'm sure you didn't use your brain. */
 	fprintf(stdout, "[STAT] "
-	    " time    | total    | req   | conn  |"
+	    " time    | total    | req   | conn           |"
 	    " connect time          |"
 	    " first byte time       |"
 	    " body time             |"
 	    " tx         | tx    | rx         | rx    | errors\n");
 	fprintf(stdout, "[STAT] "
-	    "         |          |       |       |"
+	    "         |          |       | active   total |"
 	    "   min     avg     max |"
 	    "   min     avg     max |"
 	    "   min     avg     max |"
 	    "            |       |            |       |\n");
 	fprintf(stdout, "[STAT] "
-	    "---------+----------+-------+-------+"
+	    "---------+----------+-------+----------------+"
 	    "-----------------------+"
 	    "-----------------------+"
 	    "-----------------------+"
@@ -2073,7 +2093,7 @@ SCH_bottom(void)
 
 	/* XXX WG: I'm sure you didn't use your brain. */
 	fprintf(stdout, "[STAT] "
-	    "---------+----------+-------+-------+"
+	    "---------+----------+-------+----------------+"
 	    "-----------------------+"
 	    "-----------------------+"
 	    "-----------------------+"
@@ -2097,7 +2117,8 @@ SCH_stat(void)
 	fprintf(stdout, "[STAT] %s", buf);
 	fprintf(stdout, " | %8jd", VSC_C_main->n_req);
 	fprintf(stdout, " | %5jd", VSC_C_main->n_req - prev.n_req);
-	fprintf(stdout, " | %5jd", VSC_C_main->n_conn);
+	fprintf(stdout, " | %5jd / %6jd", VSC_C_main->n_conn,
+	    VSC_C_main->n_conntotal - prev.n_conntotal);
 
 	if (VSC_C_1s->t_connmin == 1000.0)
 		fprintf(stdout, " |    na");
@@ -2457,6 +2478,47 @@ tweak_timeout(const struct parspec *par, const char *arg)
 
 /*--------------------------------------------------------------------*/
 
+static void
+tweak_generic_bool(volatile unsigned *dest, const char *arg)
+{
+	if (arg != NULL) {
+		if (!strcasecmp(arg, "off"))
+			*dest = 0;
+		else if (!strcasecmp(arg, "disable"))
+			*dest = 0;
+		else if (!strcasecmp(arg, "no"))
+			*dest = 0;
+		else if (!strcasecmp(arg, "false"))
+			*dest = 0;
+		else if (!strcasecmp(arg, "on"))
+			*dest = 1;
+		else if (!strcasecmp(arg, "enable"))
+			*dest = 1;
+		else if (!strcasecmp(arg, "yes"))
+			*dest = 1;
+		else if (!strcasecmp(arg, "true"))
+			*dest = 1;
+		else {
+			fprintf(stdout, "[ERROR] use \"on\" or \"off\"\n");
+			exit(2);
+		}
+	} else
+		fprintf(stdout, "%s", *dest ? "on" : "off");
+}
+
+/*--------------------------------------------------------------------*/
+
+static void
+tweak_bool(const struct parspec *par, const char *arg)
+{
+	volatile unsigned *dest;
+
+	dest = par->priv;
+	tweak_generic_bool(dest, arg);
+}
+
+/*--------------------------------------------------------------------*/
+
 static const struct parspec input_parspec[] = {
 	{ "connect_timeout", tweak_timeout,
 		&master.connect_timeout, 0, UINT_MAX,
@@ -2472,6 +2534,9 @@ static const struct parspec input_parspec[] = {
 		"  0x00000008 - workspace.\n"
 		"Use 0x notation and do the bitor in your head :-)\n",
 		"0", "bitmap" },
+	{ "linger", tweak_bool, &master.linger, 0, 0,
+		"Sets the linger.",
+		"off", "bool" },
 	{ "read_timeout", tweak_timeout,
 		&master.read_timeout, 1, UINT_MAX,
 		"Default timeout for receiving bytes from target. "
@@ -2571,7 +2636,7 @@ read_file(const char *fn)
 		free(buf);
 		return (NULL);
 	}
-	AZ(close (fd));
+	AZ(close(fd));
 	assert(s < sz);		/* XXX: increase MAX_FILESIZE */
 	buf[s] = '\0';
 	buf = realloc(buf, s + 1);
