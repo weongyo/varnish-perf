@@ -324,36 +324,11 @@ struct worker {
 	struct callout_block	cb;
 	int			nwant;
 	pthread_t		owner;
-
-	pthread_cond_t		cond;
+	int			queue[2];
 	VTAILQ_ENTRY(worker)	list;
 };
-VTAILQ_HEAD(workerhead, worker);
-
-struct workerthread {
-	unsigned		magic;
-#define WORKERTHREAD_MAGIC	0xadcf1234
-	struct wq		*wq;
-	struct worker		w;
-};
-
-/*--------------------------------------------------------------------*/
-
-#define	WQ_LOCK(wq)		Lck_Lock(&(wq)->mtx)
-#define	WQ_UNLOCK(wq)		Lck_Unlock(&(wq)->mtx)
-#define	WQ_LOCKASSERTHELD(wq)	Lck_AssertHeld(&(wq)->mtx)
-
-struct wq {
-	unsigned		magic;
-#define WQ_MAGIC		0x606658fa
-	struct lock		mtx;
-	struct workerhead	idle;
-	VTAILQ_HEAD(, sess)	queue;
-	unsigned		lqueue;
-	uintmax_t		nqueue;
-};
-
-static struct wq		wq;
+static VTAILQ_HEAD(, worker)	workers = VTAILQ_HEAD_INITIALIZER(workers);
+static struct lock		workers_mtx;
 
 /*--------------------------------------------------------------------*/
 
@@ -1639,79 +1614,83 @@ CNT_Session(struct sess *sp)
 	}
 }
 
-static void
-WRK_QueueInsert(struct wq *qp, struct sess *sp, int athead)
-{
-
-	WQ_LOCKASSERTHELD(qp);
-
-	if (athead)
-		VTAILQ_INSERT_HEAD(&qp->queue, sp, poollist);
-	else
-		VTAILQ_INSERT_TAIL(&qp->queue, sp, poollist);
-	qp->nqueue++;
-	qp->lqueue++;
-}
-
 /*--------------------------------------------------------------------
  * Queue a workrequest if possible.
- *
- * Return zero if the request was queued, negative if it wasn't.
  */
 
 static int
-WRK_Queue(struct sess *sp, int athead)
+WRK_Queue(struct sess *sp)
 {
 	struct worker *w;
-	struct wq *qp;
+	ssize_t l;
 
-	qp = &wq;
-	WQ_LOCK(qp);
-	/* If there are idle threads, we tickle the first one into action */
-	w = VTAILQ_FIRST(&qp->idle);
-	if (w != NULL) {
-		VTAILQ_REMOVE(&qp->idle, w, list);
-		WQ_UNLOCK(qp);
-		w->sp = sp;
-		AZ(pthread_cond_signal(&w->cond));
-		return (0);
-	}
-	WRK_QueueInsert(qp, sp, athead);
-	WQ_UNLOCK(qp);
-	return (0);
-}
-
-static int
-WRK_QueueSession(struct sess *sp)
-{
-
-	CHECK_OBJ_NOTNULL(sp, SESS_MAGIC);
 	AZ(sp->wrk);
-	if (WRK_Queue(sp, 0) == 0)
-		return (0);
-	SES_Delete(sp);
-	return (1);
+	/* LRU */
+	Lck_Lock(&workers_mtx);
+	w = VTAILQ_FIRST(&workers);
+	AN(w);
+	VTAILQ_REMOVE(&workers, w, list);
+	VTAILQ_INSERT_TAIL(&workers, w, list);
+	Lck_Unlock(&workers_mtx);
+	/* Queue on the pipe */
+	l = write(w->queue[1], &sp, sizeof(sp));
+	if (l == -1) {
+		if (errno == EAGAIN)
+			return (-2);
+		return (-1);
+	}
+	assert(l == sizeof(sp));
+	return (0);
 }
 
 static void
 WRK_Init(struct worker *w)
 {
+	int i;
 
 	bzero(w, sizeof(*w));
 	w->magic = WORKER_MAGIC;
 	w->fd = epoll_create(1);
 	assert(w->fd >= 0);
-	AZ(pthread_cond_init(&w->cond, NULL));
 	COT_init(&w->cb);
+
+	AZ(pipe(w->queue));
+	i = fcntl(w->queue[0], F_GETFL);
+	assert(i != -1);
+	i |= O_NONBLOCK;
+	i = fcntl(w->queue[0], F_SETFL, i);
+	assert(i != -1);
+	i = fcntl(w->queue[1], F_GETFL);
+	assert(i != -1);
+	i |= O_NONBLOCK;
+	i = fcntl(w->queue[1], F_SETFL, i);
+	assert(i != -1);
+
+	EVT_Add(w, SESS_WANT_READ, w->queue[0], w);
 }
 
 static void
 WRK_Fini(struct worker *w)
 {
 
-	AZ(pthread_cond_destroy(&w->cond));
+	AZ(close(w->queue[0]));
+	AZ(close(w->queue[1]));
 	COT_fini(&w->cb);
 	AZ(close(w->fd));
+}
+
+static void
+wrk_handleQueue(struct worker *w)
+{
+	ssize_t l;
+
+	l = read(w->queue[0], &w->sp, sizeof(w->sp));
+	assert(l == sizeof(w->sp));
+
+	AZ(w->sp->wrk);
+	w->sp->wrk = w;
+	CNT_Session(w->sp);
+	w->sp = NULL;
 }
 
 #define	EPOLLEVENT_MAX	(64 * 1024)
@@ -1722,76 +1701,34 @@ WRK_thread(void *arg)
 	struct epoll_event *ev, *ep;
 	struct sess *sp;
 	struct worker *w;
-	struct workerthread *wt;
-	struct wq *qp;
 	int i, n;
 
-	CAST_OBJ_NOTNULL(wt, arg, WORKERTHREAD_MAGIC);
-	CAST_OBJ_NOTNULL(qp, wt->wq, WQ_MAGIC);
+	CAST_OBJ_NOTNULL(w, arg, WORKER_MAGIC);
+	w->owner = pthread_self();
 
 	ev = malloc(sizeof(*ev) * EPOLLEVENT_MAX);
 	AN(ev);
 
-	w = &wt->w;
-	w->owner = pthread_self();
-
-	while (1) {
+	while (!stop) {
 		CHECK_OBJ_NOTNULL(w, WORKER_MAGIC);
 
 		COT_ticks(&w->cb);
 		COT_clock(&w->cb);
 
-		WQ_LOCK(qp);
-		if (w->nwant > 0) {
-			WQ_UNLOCK(qp);
-			/*
-			 * XXX WRONG EVENT-MODEL.  With current approach, CPU
-			 * burning could happen if
-			 *
-			 *  - There are some latency between the perf server and
-			 *    the target server.
-			 *  - The queue length is very long.
-			 */
-			n = epoll_wait(w->fd, ev, EPOLLEVENT_MAX, 0);
-			for (ep = ev, i = 0; i < n; i++, ep++) {
-				CAST_OBJ_NOTNULL(sp, ep->data.ptr, SESS_MAGIC);
-				assert(w == sp->wrk);
-				sp->wrk = NULL;
-				callout_stop(&w->cb, &sp->co);
-				EVT_Del(w, sp->fd);
-				sp->wrk = w;
-				CNT_Session(sp);
-			}
-			WQ_LOCK(qp);
-			if (VTAILQ_EMPTY(&qp->queue)) {
-				WQ_UNLOCK(qp);
+		n = epoll_wait(w->fd, ev, EPOLLEVENT_MAX, 1000);
+		for (ep = ev, i = 0; i < n; i++, ep++) {
+			if (ep->data.ptr == w) {
+				wrk_handleQueue(w);
 				continue;
 			}
+			CAST_OBJ_NOTNULL(sp, ep->data.ptr, SESS_MAGIC);
+			assert(w == sp->wrk);
+			sp->wrk = NULL;
+			callout_stop(&w->cb, &sp->co);
+			EVT_Del(w, sp->fd);
+			sp->wrk = w;
+			CNT_Session(sp);
 		}
-		AZ(w->sp);
-		if ((w->sp = VTAILQ_FIRST(&qp->queue)) != NULL) {
-			/* Process queued requests, if any */
-			VTAILQ_REMOVE(&qp->queue, w->sp, poollist);
-			qp->lqueue--;
-		} else {
-			assert(w->nwant == 0);
-			if (stop) {
-				WQ_UNLOCK(qp);
-				break;
-			}
-			VTAILQ_INSERT_HEAD(&qp->idle, w, list);
-			Lck_CondWait(&w->cond, &qp->mtx);
-		}
-		if (w->sp == NULL) {
-			WQ_UNLOCK(qp);
-			break;
-		}
-		WQ_UNLOCK(qp);
-
-		AZ(w->sp->wrk);
-		w->sp->wrk = w;
-		CNT_Session(w->sp);
-		w->sp = NULL;
 	}
 
 	if (params->diag_bitmap & 0x4)
@@ -1847,8 +1784,6 @@ static void
 EVT_Add(struct worker *wrk, int want, int fd, void *arg)
 {
 	struct epoll_event ev;
-
-	assert(pthread_equal(wrk->owner, pthread_self()));
 
 	AN(arg);
 	ev.data.ptr = arg;
@@ -2041,7 +1976,7 @@ SES_Schedule(struct sess *sp)
 {
 
 	sp->wrk = NULL;
-	if (WRK_Queue(sp, 1))
+	if (WRK_Queue(sp))
 		WRONG("failed to schedule the session");
 	return (0);
 }
@@ -2056,9 +1991,7 @@ SES_Rush(void)
 	if (sp != NULL) {
 		VTAILQ_REMOVE(&waiting_list, sp, poollist);
 		Lck_Unlock(&waiting_mtx);
-		WQ_LOCK(&wq);
-		WRK_QueueInsert(&wq, sp, 1);
-		WQ_UNLOCK(&wq);
+		AZ(WRK_Queue(sp));
 		return;
 	}
 	Lck_Unlock(&waiting_mtx);
@@ -2107,7 +2040,6 @@ struct sched {
 #define	SCHED_MAGIC		0x5c43a3af
 	struct callout		co;
 	struct callout_block	cb;
-	struct wq		*qp;
 };
 
 static void
@@ -2238,13 +2170,13 @@ SCH_tick_1s(void *arg)
 {
 	struct sched *scp;
 	struct sess *sp;
-	int i;
+	int i, r;
 
 	CAST_OBJ_NOTNULL(scp, arg, SCHED_MAGIC);
 
 	SCH_stat();
 
-	for (i = 0; i < r_arg; i++) {
+	for (i = 0; i < r_arg;) {
 		if (VSC_C_main->n_sess >= r_arg) {
 			VSC_C_main->n_hitlimit++;
 			break;
@@ -2255,7 +2187,17 @@ SCH_tick_1s(void *arg)
 		}
 		sp = SES_New();
 		AN(sp);
-		AZ(WRK_QueueSession(sp));
+		r = WRK_Queue(sp);
+		if (r == -2) {
+			/*
+			 * XXX pipe is full with our sp pointers so need to
+			 * yield until workers eat it.
+			 */
+			sched_yield();
+			continue;
+		}
+		AZ(r);
+		i++;
 	}
 
 	callout_reset(&scp->cb, &scp->co, CALLOUT_SECTOTICKS(1), SCH_tick_1s,
@@ -2267,10 +2209,10 @@ SCH_thread(void *arg)
 {
 	struct sched sc, *scp;
 
+	(void)arg;
 	scp = &sc;
 	bzero(scp, sizeof(*scp));
 	scp->magic = SCHED_MAGIC;
-	CAST_OBJ_NOTNULL(scp->qp, arg, WQ_MAGIC);
 	COT_init(&scp->cb);
 	callout_init(&scp->co, 0);
 	callout_reset(&scp->cb, &scp->co, CALLOUT_SECTOTICKS(0),
@@ -2360,32 +2302,28 @@ PEF_Init(void)
 static void
 PEF_Run(void)
 {
-	struct workerthread wt[t_arg];
+	struct worker w[t_arg];
 	pthread_t tp[t_arg], schedtp;
 	int i;
 
-	bzero(&wq, sizeof(wq));
-	wq.magic = WQ_MAGIC;
-	Lck_New(&wq.mtx, "WorkQueue lock");
-	VTAILQ_INIT(&wq.idle);
-	VTAILQ_INIT(&wq.queue);
+	Lck_New(&workers_mtx, "workers list mtx");
 
 	for (i = 0; i < t_arg; i++) {
-		wt[i].magic = WORKERTHREAD_MAGIC;
-		wt[i].wq = &wq;
-		WRK_Init(&wt[i].w);
-		AZ(pthread_create(&tp[i], NULL, WRK_thread, &wt[i]));
+		WRK_Init(&w[i]);
+		Lck_Lock(&workers_mtx);
+		VTAILQ_INSERT_TAIL(&workers, &w[i], list);
+		Lck_Unlock(&workers_mtx);
+		AZ(pthread_create(&tp[i], NULL, WRK_thread, &w[i]));
 	}
-	AZ(pthread_create(&schedtp, NULL, SCH_thread, &wq));
+	AZ(pthread_create(&schedtp, NULL, SCH_thread, NULL));
 	if (params->diag_bitmap & 0x4)
 		fprintf(stdout, "[INFO] Joining the scheduler thread\n");
 	AZ(pthread_join(schedtp, NULL));
 	for (i = 0; i < t_arg; i++) {
-		AZ(pthread_cond_signal(&wt[i].w.cond));
 		if (params->diag_bitmap & 0x4)
 			fprintf(stdout, "[INFO] Joining the worker thread\n");
 		AZ(pthread_join(tp[i], NULL));
-		WRK_Fini(&wt[i].w);
+		WRK_Fini(&w[i]);
 	}
 	PEF_summary();
 }
