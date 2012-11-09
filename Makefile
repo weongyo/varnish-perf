@@ -42,8 +42,7 @@ CFLAGS= \
 	-Wformat -Wextra -Wno-missing-field-initializers -Wno-sign-compare \
 	-Wall -Werror -Wshadow -Wstrict-prototypes -Wnested-externs \
 	-Wmissing-prototypes -Wredundant-decls \
-	-O0 -g -fno-inline
-
+	-O2
 
 LDFLAGS=\
 	-lm -lpthread -lrt
