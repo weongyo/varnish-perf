@@ -44,6 +44,9 @@ CFLAGS= \
 	-Wmissing-prototypes -Wredundant-decls \
 	-O2
 
+DEBUG_CFLAGS= \
+	$(CFLAGS) -O0 -g -fno-inline
+
 LDFLAGS=\
 	-lm -lpthread -lrt
 
