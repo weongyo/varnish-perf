@@ -95,6 +95,7 @@ struct params {
 
 	unsigned		diag_bitmap;
 
+	unsigned		sess_workspace;
 	unsigned		linger;
 };
 static struct params		master;
@@ -2525,6 +2526,46 @@ tweak_bool(const struct parspec *par, const char *arg)
 
 /*--------------------------------------------------------------------*/
 
+static void
+tweak_generic_uint(volatile unsigned *dest, const char *arg,
+    unsigned min, unsigned max)
+{
+	unsigned u;
+
+	if (arg != NULL) {
+		if (!strcasecmp(arg, "unlimited"))
+			u = UINT_MAX;
+		else
+			u = strtoul(arg, NULL, 0);
+		if (u < min) {
+			fprintf(stdout, "[ERROR] Must be at least %u\n", min);
+			exit(2);
+		}
+		if (u > max) {
+			fprintf(stdout, "[ERROR] Must be no more than %u\n", max);
+			exit(2);
+		}
+		*dest = u;
+	} else if (*dest == UINT_MAX) {
+		fprintf(stdout, "unlimited");
+	} else {
+		fprintf(stdout, "%u", *dest);
+	}
+}
+
+/*--------------------------------------------------------------------*/
+
+static void
+tweak_uint(const struct parspec *par, const char *arg)
+{
+	volatile unsigned *dest;
+
+	dest = par->priv;
+	tweak_generic_uint(dest, arg, (uint)par->min, (uint)par->max);
+}
+
+/*--------------------------------------------------------------------*/
+
 static const struct parspec input_parspec[] = {
 	{ "connect_timeout", tweak_timeout,
 		&master.connect_timeout, 0, UINT_MAX,
@@ -2549,6 +2590,12 @@ static const struct parspec input_parspec[] = {
 		"We only wait for this many seconds for bytes "
 		"before giving up.",
 		"6", "seconds" },
+	{ "sess_workspace", tweak_uint, &master.sess_workspace, 1024, UINT_MAX,
+		"Bytes of HTTP protocol workspace allocated for sessions. "
+		"This space must be big enough for the entire HTTP protocol "
+		"header.\n"
+		"Minimum is 1024 bytes.",
+		"4096", "bytes" },
 	{ "write_timeout", tweak_timeout, &master.write_timeout, 0, 0,
 		"Send timeout for client connections. "
 		"If the HTTP response hasn't been transmitted in this many\n"
