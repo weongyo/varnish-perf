@@ -253,9 +253,11 @@ struct sess {
 
 	int			calls;
 
+#ifdef VARNISHPERF_DEBUG
 #define	STEPHIST_MAX		64
 	enum step		stephist[STEPHIST_MAX];
 	int			nstephist;
+#endif
 
 	struct url		*url;
 
@@ -1617,7 +1619,9 @@ CNT_Session(struct sess *sp)
 		CHECK_OBJ_NOTNULL(sp, SESS_MAGIC);
 		CHECK_OBJ_NOTNULL(sp->wrk, WORKER_MAGIC);
 
+#ifdef VARNISHPERF_DEBUG
 		sp->stephist[sp->nstephist++ % STEPHIST_MAX] = sp->step;
+#endif
 
 		switch (sp->step) {
 #define STEP(l,u) \
