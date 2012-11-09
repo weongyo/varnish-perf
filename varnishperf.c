@@ -1003,7 +1003,7 @@ vbe_CheckFd(int fd)
 	pfd.fd = fd;
 	pfd.events = POLLIN;
 	pfd.revents = 0;
-	return(poll(&pfd, 1, 0) == 0);
+	return (poll(&pfd, 1, 0) == 0);
 }
 
 static int
@@ -1012,7 +1012,7 @@ cnt_http_txreq_init(struct sess *sp)
 
 	if (!vbe_CheckFd(sp->fd)) {
 		fprintf(stdout,
-		    "[ERROR] something is still at the socket buffer.\n");
+		    "[ERROR] socket is closed or its buffer isn't empty.\n");
 		sp->step = STP_HTTP_ERROR;
 		return (0);
 	}
