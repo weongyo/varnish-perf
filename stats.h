@@ -24,6 +24,7 @@
  * SUCH DAMAGE.
  */
 
+PERFSTAT_u64(n_worker,		'g', "N worker threads", "threads")
 PERFSTAT_u64(n_sess,		'g', "N session current active", "sessions")
 PERFSTAT_u64(n_timeout,		'c', "N session timed out", "sessions")
 PERFSTAT_u64(n_conn,		'g', "N connection active", "conns")

@@ -2335,6 +2335,7 @@ PEF_Run(void)
 		VTAILQ_INSERT_TAIL(&workers, &w[i], list);
 		Lck_Unlock(&workers_mtx);
 		AZ(pthread_create(&tp[i], NULL, WRK_thread, &w[i]));
+		VSC_C_main->n_worker++;
 	}
 	AZ(pthread_create(&schedtp, NULL, SCH_thread, NULL));
 	if (params->diag_bitmap & 0x4)
