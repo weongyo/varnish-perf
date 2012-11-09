@@ -861,7 +861,6 @@ cnt_start(struct sess *sp)
 {
 	static int cnt = 0;
 
-	WS_Reset(sp->ws, NULL);
 	callout_init(&sp->co, 0);
 	sp->url = urls[cnt++ % num_urls];
 	sp->t_start = TIM_real();
@@ -1522,7 +1521,11 @@ cnt_http_ok(struct sess *sp)
 skip:
 	if ((sp->flags & SESS_F_EOF) == 0 && sp->calls < C_arg && !stop) {
 		sp->step = STP_HTTP_TXREQ_INIT;
-		return (0);
+		callout_reset(&sp->wrk->cb, &sp->co,
+		    CALLOUT_SECTOTICKS(params->write_timeout), cnt_timeout_tick,
+		    sp);
+		SES_Wait(sp, SESS_WANT_WRITE);
+		return (1);
 	}
 	sp->step = STP_HTTP_DONE;
 	return (0);
@@ -2228,7 +2231,8 @@ SCH_tick_1s(void *arg)
 				 * XXX pipe is full with our sp pointers so need to
 				 * yield until workers eat some of queue.
 				 */
-				sched_yield();
+				TIM_sleep(0.1);
+				continue;
 			}
 			if (r == -1) {
 				fprintf(stdout, "WRK_Queue failed: %d %s\n",
