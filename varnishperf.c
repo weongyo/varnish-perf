@@ -2197,7 +2197,7 @@ SCH_tick_1s(void *arg)
 
 	SCH_stat();
 
-	for (i = 0; i < r_arg;) {
+	for (i = 0; i < r_arg; i++) {
 		if (VSC_C_main->n_sess >= r_arg) {
 			VSC_C_main->n_hitlimit++;
 			break;
@@ -2208,17 +2208,14 @@ SCH_tick_1s(void *arg)
 		}
 		sp = SES_New();
 		AN(sp);
-		r = WRK_Queue(sp);
-		if (r == -2) {
+		while ((r = WRK_Queue(sp)) == -2) {
 			/*
 			 * XXX pipe is full with our sp pointers so need to
 			 * yield until workers eat it.
 			 */
 			sched_yield();
-			continue;
 		}
 		AZ(r);
-		i++;
 	}
 
 	callout_reset(&scp->cb, &scp->co, CALLOUT_SECTOTICKS(1), SCH_tick_1s,
