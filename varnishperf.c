@@ -2211,7 +2211,7 @@ SCH_tick_1s(void *arg)
 		while ((r = WRK_Queue(sp)) == -2) {
 			/*
 			 * XXX pipe is full with our sp pointers so need to
-			 * yield until workers eat it.
+			 * yield until workers eat some of queue.
 			 */
 			sched_yield();
 		}
