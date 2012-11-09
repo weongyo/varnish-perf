@@ -2081,19 +2081,19 @@ SCH_hdr(void)
 
 	/* XXX WG: I'm sure you didn't use your brain. */
 	fprintf(stdout, "[STAT] "
-	    " time    | total    | req   | conn           |"
+	    " time    | total    | req    | conn           |"
 	    " connect time          |"
 	    " first byte time       |"
 	    " body time             |"
 	    " tx         | tx    | rx         | rx    | errors\n");
 	fprintf(stdout, "[STAT] "
-	    "         |          |       | active   total |"
+	    "         |          |        | active   total |"
 	    "   min     avg     max |"
 	    "   min     avg     max |"
 	    "   min     avg     max |"
 	    "            |       |            |       |\n");
 	fprintf(stdout, "[STAT] "
-	    "---------+----------+-------+----------------+"
+	    "---------+----------+--------+----------------+"
 	    "-----------------------+"
 	    "-----------------------+"
 	    "-----------------------+"
@@ -2106,7 +2106,7 @@ SCH_bottom(void)
 
 	/* XXX WG: I'm sure you didn't use your brain. */
 	fprintf(stdout, "[STAT] "
-	    "---------+----------+-------+----------------+"
+	    "---------+----------+--------+----------------+"
 	    "-----------------------+"
 	    "-----------------------+"
 	    "-----------------------+"
@@ -2129,7 +2129,7 @@ SCH_stat(void)
 	TIM_format(now - boottime, buf);
 	fprintf(stdout, "[STAT] %s", buf);
 	fprintf(stdout, " | %8jd", VSC_C_main->n_req);
-	fprintf(stdout, " | %5jd", VSC_C_main->n_req - prev.n_req);
+	fprintf(stdout, " | %6jd", VSC_C_main->n_req - prev.n_req);
 	fprintf(stdout, " | %5jd / %6jd", VSC_C_main->n_conn,
 	    VSC_C_main->n_conntotal - prev.n_conntotal);
 
