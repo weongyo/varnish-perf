@@ -2202,9 +2202,13 @@ SCH_tick_1s(void *arg)
 			VSC_C_main->n_hitlimit++;
 			break;
 		}
-		if (c_arg != 0 && n_sess_grab >= c_arg) {
-			stop = 1;
-			return;
+		if (c_arg != 0) {
+			if (n_sess_rel >= c_arg) {
+				stop = 1;
+				break;
+			}
+			if (n_sess_grab >= c_arg)
+				break;
 		}
 		sp = SES_New();
 		AN(sp);
