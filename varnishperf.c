@@ -276,8 +276,6 @@ struct sess {
 	ssize_t			nooffset;
 	ssize_t			no;
 	struct ws		ws[1];
-#define	WSBUFMAX		(8 * 1024)
-	char			_wsbuf[WSBUFMAX];
 #define	MAXHDR			64
 	char			*resphdr[MAXHDR];
 
@@ -304,6 +302,8 @@ struct sessmem {
 #define SESSMEM_MAGIC		0x555859c5
 
 	struct sess		sess;
+	unsigned		workspace;
+	void			*wsp;
 	VTAILQ_ENTRY(sessmem)	list;
 	struct sockaddr_storage	sockaddr[2];
 };
@@ -861,7 +861,7 @@ cnt_start(struct sess *sp)
 {
 	static int cnt = 0;
 
-	WS_Init(sp->ws, "sess workspace", sp->_wsbuf, sizeof(sp->_wsbuf));
+	WS_Reset(sp->ws, NULL);
 	callout_init(&sp->co, 0);
 	sp->url = urls[cnt++ % num_urls];
 	sp->t_start = TIM_real();
@@ -1848,11 +1848,15 @@ static struct sessmem *
 ses_sm_alloc(void)
 {
 	struct sessmem *sm;
+	unsigned l;
 
-	sm = malloc(sizeof(*sm));
+	l = sizeof(*sm) + params->sess_workspace;
+	sm = malloc(l);
 	if (sm == NULL)
 		return (NULL);
 	sm->magic = SESSMEM_MAGIC;
+	sm->workspace = params->sess_workspace;
+	sm->wsp = (void *)(sm + 1);
 	return (sm);
 }
 
@@ -1876,6 +1880,7 @@ ses_setup(struct sessmem *sm)
 	sp->mysockaddr = (void*)(&sm->sockaddr[1]);
 	sp->mysockaddrlen = sizeof(sm->sockaddr[1]);
 	sp->mysockaddr->ss_family = PF_UNSPEC;
+	WS_Init(sp->ws, "sess workspace", sm->wsp, sm->workspace);
 }
 
 static void
